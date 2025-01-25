@@ -1,0 +1,3269 @@
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Data;
+using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using System.Windows.Forms.DataVisualization.Charting;
+using System.Windows.Forms;
+using System.Data.SqlClient;
+using System.IO;
+
+
+namespace CarManufacture
+{
+    public partial class dashboard : Form
+    {
+        string connectionString = @"Server=KRYSTAL\MSSQLSERVER01;Database=training;Integrated Security=True;";
+        public dashboard()
+        {
+            InitializeComponent();
+            InitializeNavigationBar();
+            AddTotalCarsProducedChart();
+            CreateNotificationPanel();
+            AddEnhancedTitle();
+   
+
+        }
+       
+        private void AddEnhancedTitle()
+        {
+            Panel dashboardTitlePanel = new Panel
+            {
+                Name = "dashboardTitlePanel",
+                Dock = DockStyle.Top, // Dock it to the top
+                Height = 65,
+                BackColor = Color.LightSlateGray
+            };
+            this.Controls.Add(dashboardTitlePanel);
+
+            // Add the title label
+            Label titleLabel = new Label
+            {
+                Text = "DASHBOARD",
+                Font = new Font("Segoe UI", 20, FontStyle.Bold),
+                AutoSize = true,
+                ForeColor = Color.White,
+                TextAlign = ContentAlignment.MiddleCenter
+            };
+            dashboardTitlePanel.Controls.Add(titleLabel);
+
+            // Center the label initially
+            dashboardTitlePanel.SizeChanged += (s, e) =>
+            {
+                titleLabel.Location = new Point(
+                    (dashboardTitlePanel.Width - titleLabel.Width) / 2,
+                    (dashboardTitlePanel.Height - titleLabel.Height) / 2
+                );
+            };
+
+            // Add a bottom border to the title panel
+            Panel bottomBorder = new Panel
+            {
+                Dock = DockStyle.Bottom,
+                Height = 3,
+                BackColor = Color.White // Thin white line to emphasize the separation
+            };
+            dashboardTitlePanel.Controls.Add(bottomBorder);
+
+            // Make sure the panel is visible
+            dashboardTitlePanel.Visible = true; // Ensure the panel is visible when the form is loaded
+        }
+
+        private void CreateNotificationPanel()
+        {
+         
+            // Create a Panel for notifications
+            Panel alertPanel = new Panel
+            {
+                Name = "AlertPanel", // Set the Name property during initialization
+                Size = new Size(400, 300),
+                Location = new Point(1000, 300),  // Fixed position on the right side of the form
+                BackColor = Color.White,
+                BorderStyle = BorderStyle.FixedSingle,
+                AutoScroll = true,  // Allow scrolling if content exceeds panel size
+                Visible = true  // Ensure it's visible when created
+            };
+
+            // Make sure the panel stays above other controls
+            alertPanel.BringToFront();
+
+            // Add the alertPanel to the form
+            this.Controls.Add(alertPanel);
+
+            // Create a ToolTip for additional info
+            ToolTip toolTip = new ToolTip();
+
+            // Array of alert notifications for different types
+            var alerts = new List<(string AlertType, string Text, string Tooltip, Color ForeColor, Image Icon, string EventMessage, string DetailMessage)>
+    {
+        ("Stock Alert", "Out of Stock", "Parts are out of stock", Color.Red,
+         ConvertByteArrayToImage(CarManufacture.Resource1.alert),
+         "Go to Inventory Management to resolve out of stock.", "Show parts that are out of stock"),
+
+        ("Stock Alert", "Low Stock Warning", "Inventory is running low", Color.Orange,
+         ConvertByteArrayToImage(CarManufacture.Resource1.alert),
+         "Go to Inventory Management to resolve low stock.", "Show parts with low stock"),
+
+        ("Event", "Important Event", "Upcoming important event", Color.Green,
+         ConvertByteArrayToImage(CarManufacture.Resource1.reminder),
+         "Go to the events section for more details.", "Show details of important events"),
+
+        ("Order", "Pending Orders", "You have pending orders", Color.Blue,
+         ConvertByteArrayToImage(CarManufacture.Resource1.hour_glass),
+         "Go to Order Management to process pending orders.", "Show pending orders details")
+    };
+
+            // Loop through each alert and add them to the panel
+            int yOffset = 10; // Initial vertical offset for positioning the items
+            foreach (var alert in alerts)
+            {
+                // Create a Panel for each alert
+                Panel alertItemPanel = new Panel
+                {
+                    Size = new Size(380, 60),
+                    Location = new Point(10, yOffset),
+                    BackColor = Color.LightGray,
+                    BorderStyle = BorderStyle.FixedSingle
+                };
+                alertPanel.Controls.Add(alertItemPanel);
+
+                // Create Label for the alert text
+                Label alertLabel = new Label
+                {
+                    Text = alert.Text,
+                    ForeColor = alert.ForeColor,
+                    Location = new Point(10, 10),
+                    AutoSize = true
+                };
+                alertItemPanel.Controls.Add(alertLabel);
+
+                // Create PictureBox for the icon
+                PictureBox alertIcon = new PictureBox
+                {
+                    Image = alert.Icon,
+                    Location = new Point(250, 10),
+                    Size = new Size(30, 30),
+                    SizeMode = PictureBoxSizeMode.StretchImage
+                };
+                alertItemPanel.Controls.Add(alertIcon);
+
+                // Set tooltip for the label to show details
+                toolTip.SetToolTip(alertLabel, $"{alert.Tooltip}");
+                toolTip.SetToolTip(alertIcon, $"{alert.Tooltip}");
+
+                // Set an event handler for the panel click to show the details
+                alertItemPanel.Click += (sender, e) =>
+                {
+                    if (alert.AlertType == "Stock Alert" && alert.Text == "Out of Stock")
+                    {
+                        ShowOutOfStockParts();
+                    }
+                    else
+                    {
+                        ShowAlertDetails(alert.AlertType, alert.DetailMessage);
+                    }
+                };
+
+                // Create a Label for the event message (optional)
+                Label eventMessageLabel = new Label
+                {
+                    Text = alert.EventMessage,
+                    Location = new Point(10, 35),
+                    AutoSize = true
+                };
+                alertItemPanel.Controls.Add(eventMessageLabel);
+
+                // Increase yOffset for the next notification
+                yOffset += 70; // Adjust this to fit your layout
+            }
+        }
+
+        // Event handler for showing the out of stock parts
+        private void ShowOutOfStockParts()
+        {
+            // Create a list to store part IDs that are out of stock
+            List<string> outOfStockParts = new List<string>();
+
+            // SQL query to get the Part IDs of parts that are out of stock (Quantity = 0)
+            string query = "SELECT PartID FROM Parts WHERE QuantityAvailable = 0";
+
+            using (SqlConnection conn = new SqlConnection(connectionString))
+            {
+                SqlCommand cmd = new SqlCommand(query, conn);
+                conn.Open();
+                SqlDataReader reader = cmd.ExecuteReader();
+
+                // Fetch all out-of-stock part IDs
+                while (reader.Read())
+                {
+                    outOfStockParts.Add(reader["PartID"].ToString());
+                }
+                conn.Close();
+            }
+
+            // Show the out-of-stock part IDs in a message box or in a new form/panel
+            if (outOfStockParts.Count > 0)
+            {
+                string partsList = string.Join(", ", outOfStockParts);
+                MessageBox.Show($"The following parts are out of stock:\n{partsList}", "Out of Stock Parts", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+            else
+            {
+                MessageBox.Show("No parts are currently out of stock.", "Out of Stock Parts", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+        }
+
+        // Event handler for displaying other alert details (e.g., low stock, pending orders)
+        private void ShowAlertDetails(string alertType, string detailMessage)
+        {
+            // Show additional information based on the alert type
+            MessageBox.Show($"{alertType} Details: {detailMessage}", "Alert Details", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        // Helper method to convert byte[] to Image
+        private static Image ConvertByteArrayToImage(byte[] byteArray)
+        {
+            using (MemoryStream ms = new MemoryStream(byteArray))
+            {
+                return Image.FromStream(ms);
+            }
+        }
+
+        private void AddTotalCarsProducedChart()
+        {
+            // Create a panel for the chart
+            Panel chartPanel = new Panel
+            {
+                Size = new Size(800, 400), // Adjust size as needed
+                Location = new Point(50, 250), // Position on the dashboard
+                BackColor = Color.White,
+                Name = "ChartPanel" ,// Give it a name for easy reference
+                Visible = true 
+            };
+            this.Controls.Add(chartPanel);
+
+            // Ensure the chart panel stays visible
+            chartPanel.BringToFront();
+
+            // Create the chart
+            Chart productionChart = new Chart
+            {
+                Dock = DockStyle.Fill
+            };
+            chartPanel.Controls.Add(productionChart);
+
+
+            // Create a ChartArea
+            ChartArea chartArea = new ChartArea
+            {
+                Name = "ProductionArea",
+                AxisX = { Title = "Month", MajorGrid = { LineColor = Color.LightGray, LineDashStyle = ChartDashStyle.Dash } },
+                AxisY = { Title = "Cars Produced", MajorGrid = { LineColor = Color.LightGray, LineDashStyle = ChartDashStyle.Dash } }
+            };
+
+            chartArea.AxisX.Interval = 1; // Ensures all labels are shown
+            chartArea.AxisX.IsLabelAutoFit = true; // Allows labels to resize or rotate
+            productionChart.ChartAreas.Add(chartArea);
+
+            Series series = new Series
+            {
+                Name = "TotalCars",
+                ChartType = SeriesChartType.Line, // Line chart for trends
+                BorderWidth = 3,
+                Color = Color.SteelBlue,
+                MarkerStyle = MarkerStyle.Circle,
+                MarkerSize = 8,
+                MarkerColor = Color.Red,
+                IsValueShownAsLabel = false // Hide data labels initially
+            };
+            series.ToolTip = "#VALX: #VALY Cars"; // Displays the month and number of cars produced when hovered
+            productionChart.Series.Add(series);
+
+            // Add MouseMove event to trigger tooltips when hovering over data points
+            productionChart.MouseMove += (sender, e) =>
+            {
+                productionChart.Invalidate();
+            };
+
+            LoadMonthlyProductionData(series);
+
+            // Add a title to the chart
+            Title chartTitle = new Title
+            {
+                Text = "Total Cars Produced in 2024", // Title text
+                Font = new Font("Segoe UI", 14, FontStyle.Bold), // Font style and size
+                ForeColor = Color.SteelBlue, // Font color
+                Alignment = ContentAlignment.TopCenter // Position the title at the top center
+            };
+            productionChart.Titles.Add(chartTitle);
+
+            int totalCarsProduced = (int)series.Points.Sum(p => p.YValues[0]); // Casting double to int
+
+            Label totalCarsLabel = new Label
+            {
+                Text = $"Total Cars Produced in 2024: {totalCarsProduced}",
+                Font = new Font("Segoe UI", 24, FontStyle.Bold),
+                ForeColor = Color.DeepSkyBlue,
+                Location = new Point(150, chartPanel.Bottom + 20),
+                AutoSize = true
+            };
+            this.Controls.Add(totalCarsLabel);
+
+            // Ensure the chart and label are always visible, bring it to front when the form is updated
+            this.ControlAdded += (sender, e) =>
+            {
+                if (e.Control != chartPanel)
+                {
+                    chartPanel.BringToFront();
+                }
+            };
+        
+
+
+
+        // Glow effect
+        var timer = new Timer();
+            timer.Interval = 500;
+            bool glowing = false;
+            timer.Tick += (sender, args) =>
+            {
+                totalCarsLabel.ForeColor = glowing ? Color.SteelBlue: Color.Gray;
+                glowing = !glowing;
+            };
+            timer.Start();
+
+            // Handle empty data
+            if (series.Points.Count == 0)
+            {
+                productionChart.Titles.Clear();
+                productionChart.Titles.Add("No Data Available");
+            }
+            }
+            
+
+        private void LoadMonthlyProductionData(Series series)
+        {
+          
+            string query = "SELECT MonthYear, TotalCarsProduced FROM MonthlyProduction";
+
+            try
+            {
+                using (SqlConnection connection = new SqlConnection(connectionString))
+                {
+                    connection.Open();
+                    using (SqlCommand command = new SqlCommand(query, connection))
+                    {
+                        SqlDataReader reader = command.ExecuteReader();
+                        while (reader.Read())
+                        {
+                            string monthYear = reader["MonthYear"].ToString(); // e.g., "2024-01"
+                            int totalCarsProduced = (int)reader["TotalCarsProduced"];
+                            series.Points.AddXY(monthYear, totalCarsProduced);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Error loading data: " + ex.Message);
+            }
+        }
+
+
+        private void InitializeNavigationBar()
+        {
+            // Create a navigation panel
+            Panel navPanel = new Panel
+            {
+                Name = "navPanel", // Add a name for easy reference
+                Dock = DockStyle.Top,
+                Height = 100,
+                BackColor = Color.SteelBlue // Set background color for the navigation bar
+            };
+
+            this.Controls.Add(navPanel); // Add navigation bar to the form
+
+            // Ensure dashboardTitlePanel is always visible and at the top
+            var dashboardTitlePanel = this.Controls.OfType<Panel>().FirstOrDefault(p => p.Name == "dashboardTitlePanel");
+            if (dashboardTitlePanel != null)
+            {
+                dashboardTitlePanel.BringToFront();
+            }
+
+            // Create a circular container for the logo and text
+            Panel circularPanel = new Panel
+            {
+                Width = 70, // Adjust the size of the circle
+                Height = 70,
+                Location = new Point(10, 15), // Position on the navPanel
+                BackColor = Color.Transparent, // Transparent background for circular shape
+                Padding = new Padding(5)
+            };
+
+            circularPanel.Paint += (sender, e) =>
+            {
+                GraphicsPath path = new GraphicsPath();
+                path.AddEllipse(0, 0, circularPanel.Width - 1, circularPanel.Height - 1);
+                e.Graphics.SetClip(path);
+                e.Graphics.FillEllipse(new SolidBrush(Color.White), 0, 0, circularPanel.Width - 1, circularPanel.Height - 1);
+            };
+
+            navPanel.Controls.Add(circularPanel);
+
+            // Add logo inside the circular panel
+            PictureBox logo = new PictureBox
+            {
+                Image = Image.FromFile(@"C:\Users\babur\Downloads\Screenshot_2024-12-28_214248-removebg-preview.png"),
+                SizeMode = PictureBoxSizeMode.Zoom,
+                Width = circularPanel.Width - 10,
+                Height = circularPanel.Height - 10,
+                Location = new Point(5, 5)
+            };
+            circularPanel.Controls.Add(logo);
+
+            // Define navigation items with sub-navigation options
+            var navigationItems = new Dictionary<string, string[]>
+    {
+        {"Dashboard", new string[] { }},
+        {"CAR MODELS", new string[] { }},
+        { "Inventory", new[] { "Part Master", "Stock Levels", "Goods Receipt Note (GRN)", "Goods Out" } },
+        { "Production", new[] { "Ongoing Batches", "Completed Batches", "BOM " } },
+        { "Orders", new[] { "Pending Orders", "Processed Orders", "Shipped Orders" } }
+    };
+
+            // Navigation button positioning
+            int totalWidth = 0;
+            List<Button> mainButtons = new List<Button>();
+            foreach (var item in navigationItems)
+            {
+                string mainItem = item.Key.ToUpper();
+                Button mainButton = new Button
+                {
+                    Text = mainItem,
+                    FlatStyle = FlatStyle.Flat,
+                    BackColor = Color.Transparent,
+                    ForeColor = Color.White,
+                    Width = 120,
+                    Height = 35,
+                    Font = new Font("Segoe UI", 9, FontStyle.Regular),
+                    TextAlign = ContentAlignment.MiddleCenter
+                };
+                mainButton.FlatAppearance.BorderSize = 0;
+                mainButton.FlatAppearance.MouseOverBackColor = Color.LightSteelBlue;
+                mainButtons.Add(mainButton);
+                totalWidth += mainButton.Width + 10;
+            }
+
+            // Position buttons
+            int xOffset = 90;
+            foreach (var item in navigationItems)
+            {
+                string mainItem = item.Key.ToUpper();
+                string[] subItems = item.Value;
+                Button mainButton = mainButtons.First(b => b.Text == mainItem);
+
+                mainButton.Location = new Point(xOffset, 30);
+                navPanel.Controls.Add(mainButton);
+                // --- Add vertical line to separate buttons ---
+                // Create a vertical line (Panel) to separate the buttons
+                Panel verticalLine = new Panel
+                {
+                    BackColor = Color.White, // Line color (you can change it)
+                    Location = new Point(xOffset + mainButton.Width, 30), // Position it right after the button
+                    Width = 2, // Width of the line
+                    Height = mainButton.Height, // Match the height of the main button
+                };
+
+                // Add vertical line to navPanel
+                navPanel.Controls.Add(verticalLine);
+                mainButton.Click += (sender, e) => NavigateToPage(mainItem);
+
+                Panel subNavPanel = new Panel
+                {
+                    Visible = false,
+                    BackColor = Color.SteelBlue,
+                    Location = new Point(xOffset, mainButton.Bottom),
+                    Width = mainButton.Width,
+                    Height = subItems.Length * 49
+                };
+                this.Controls.Add(subNavPanel);
+
+                int yOffset = 35;
+                foreach (string subItem in subItems)
+                {
+                    Button subButton = new Button
+                    {
+                        Text = subItem.ToUpper(),
+                        FlatStyle = FlatStyle.Flat,
+                        BackColor = Color.SteelBlue,
+                        ForeColor = Color.White,
+                        Location = new Point(0, yOffset),
+                        Width = mainButton.Width,
+                        Height = 40,
+                        Font = new Font("Segoe UI", 9, FontStyle.Regular),
+                        TextAlign = ContentAlignment.MiddleCenter
+                    };
+                    subButton.FlatAppearance.BorderSize = 1;
+                    subButton.FlatAppearance.MouseOverBackColor = Color.LightSteelBlue;
+                    subButton.Click += (sender, e) => NavigateToPage(subItem);
+                    subNavPanel.Controls.Add(subButton);
+                    yOffset += 40;
+                    subButton.Click += (sender, e) => NavigateToPage(subItem.ToUpper());
+
+                }
+
+                // Toggle visibility for sub-navigation
+                mainButton.Click += (sender, e) =>
+                {
+                    // Toggle visibility of the sub-navigation panel
+                    subNavPanel.Visible = !subNavPanel.Visible;
+
+                    // Adjust the position of the sub-navigation panel to be below the main button
+                    if (subNavPanel.Visible)
+                    {
+                        subNavPanel.Location = new Point(mainButton.Left, mainButton.Bottom); // Position it below the main button
+                        subNavPanel.BringToFront();
+                    }
+
+                    // Ensure the main button stays visible by setting it explicitly to true
+                    mainButton.Visible = true;
+
+                    // Hide other sub-navigation panels when a new one is clicked, except for dashboardTitlePanel
+                    foreach (Control control in this.Controls)
+                    {
+                        if (control is Panel panel && panel != subNavPanel && panel != navPanel && panel.Name != "dashboardTitlePanel")
+                        {
+                            panel.Visible = false;
+                        }
+                    }
+
+                    // Ensure the chart panel is always visible
+                    var chartPanel = this.Controls.OfType<Panel>().FirstOrDefault(p => p.Name == "ChartPanel");
+                    if (chartPanel != null)
+                    {
+                        chartPanel.Visible = true;
+                    }
+
+                    // Ensure the alert panel is always visible
+                    var alertPanel = this.Controls.OfType<Panel>().FirstOrDefault(p => p.Name == "AlertPanel");
+                    if (alertPanel != null)
+                    {
+                        alertPanel.Visible = true;
+                    }
+
+                    // Ensure the dashboardTitlePanel stays visible and at the top
+                    if (dashboardTitlePanel != null)
+                    {
+                        dashboardTitlePanel.Visible = true;
+                        dashboardTitlePanel.BringToFront(); // Bring it to the front
+                    }
+                };
+
+                // Adjust position for next item
+                xOffset += mainButton.Width + 10;
+            }
+        }
+
+
+
+
+        // Method to handle navigation
+        private void NavigateToPage(string pageName)
+        {
+            if (pageName == "DASHBOARD")
+            {
+                // Create an instance of the Dashboard form
+                dashboard dashboardForm = new dashboard();
+
+                // Maximize the form
+                dashboardForm.WindowState = FormWindowState.Maximized;
+
+                // Show the Dashboard form
+                dashboardForm.Show();
+
+                // Optionally, hide the current form if you don't want it visible
+                this.Hide();
+            }
+            else if (pageName == "CAR MODELS")
+            {
+                // Create an instance of the CarModel form
+                CarModel carModelForm = new CarModel();
+
+                // Maximize the form
+                carModelForm.WindowState = FormWindowState.Maximized;
+
+                // Show the CarModel form
+                carModelForm.Show();
+
+                // Optionally, hide the current form if you don't want it visible
+                this.Hide();
+            }
+            else if (pageName == "PART MASTER")
+            {
+                // Create an instance of the PartMaster form
+                PartMaster partMaster = new PartMaster();
+
+                // Maximize the form
+                partMaster.WindowState = FormWindowState.Maximized;
+
+                // Show the PartMaster form
+                partMaster.Show();
+
+                // Optionally, hide the current form if you don't want it visible
+                this.Hide();
+            }
+            else if (pageName == "STOCK LEVEL")
+            {
+                // Create an instance of the StockLevel form
+                StockLevel stockLevel = new StockLevel();
+
+                // Maximize the form
+                stockLevel.WindowState = FormWindowState.Maximized;
+
+                // Show the StockLevel form
+                stockLevel.Show();
+
+                // Optionally, hide the current form if you don't want it visible
+                this.Hide();
+            }
+            else
+            {
+                
+            }
+        }
+
+
+
+
+    }
+}
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Data;
+using System.Data.SqlClient;
+using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+
+namespace CarManufacture
+{
+    public partial class PartMaster : Form
+    {
+        string connectionString = @"Server=KRYSTAL\MSSQLSERVER01;Database=training;Integrated Security=True;";
+
+        public PartMaster()
+        {
+            InitializeComponent();
+            InitializeNavigationBar();
+            AddEnhancedTitle();
+            this.Load += new System.EventHandler(this.Form_Load);
+            this.Load += new System.EventHandler(this.Form1_Load);
+            LoadModelNames();
+            SetupDataGridView();
+            InitializeTB1();
+     
+        
+        }
+       
+      
+
+        private void AddEnhancedTitle()
+        {
+            Panel dashboardTitlePanel = new Panel
+            {
+                Name = "dashboardTitlePanel",
+                Dock = DockStyle.Top, // Dock it to the top
+                Height = 65,
+                BackColor = Color.LightSlateGray
+            };
+            this.Controls.Add(dashboardTitlePanel);
+
+            // Add the title label
+            Label titleLabel = new Label
+            {
+                Text = "PART MASTER",
+                Font = new Font("Segoe UI", 20, FontStyle.Bold),
+                AutoSize = true,
+                ForeColor = Color.White,
+                TextAlign = ContentAlignment.MiddleCenter
+            };
+            dashboardTitlePanel.Controls.Add(titleLabel);
+
+            // Center the label initially
+            dashboardTitlePanel.SizeChanged += (s, e) =>
+            {
+                titleLabel.Location = new Point(
+                    (dashboardTitlePanel.Width - titleLabel.Width) / 2,
+                    (dashboardTitlePanel.Height - titleLabel.Height) / 2
+                );
+            };
+
+            // Add a bottom border to the title panel
+            Panel bottomBorder = new Panel
+            {
+                Dock = DockStyle.Bottom,
+                Height = 3,
+                BackColor = Color.White // Thin white line to emphasize the separation
+            };
+            dashboardTitlePanel.Controls.Add(bottomBorder);
+
+            // Make sure the panel is visible
+            dashboardTitlePanel.Visible = true; // Ensure the panel is visible when the form is loaded
+        }
+        private void InitializeNavigationBar()
+        {
+            // Create a navigation panel
+            Panel navPanel = new Panel
+            {
+                Name = "navPanel", // Add a name for easy reference
+                Dock = DockStyle.Top,
+                Height = 100,
+                BackColor = Color.SteelBlue // Set background color for the navigation bar
+            };
+
+            this.Controls.Add(navPanel); // Add navigation bar to the form
+
+            // Ensure dashboardTitlePanel is always visible and at the top
+            var dashboardTitlePanel = this.Controls.OfType<Panel>().FirstOrDefault(p => p.Name == "dashboardTitlePanel");
+            if (dashboardTitlePanel != null)
+            {
+                dashboardTitlePanel.BringToFront();
+            }
+
+            // Create a circular container for the logo and text
+            Panel circularPanel = new Panel
+            {
+                Width = 70, // Adjust the size of the circle
+                Height = 70,
+                Location = new Point(10, 15), // Position on the navPanel
+                BackColor = Color.Transparent, // Transparent background for circular shape
+                Padding = new Padding(5)
+            };
+
+            circularPanel.Paint += (sender, e) =>
+            {
+                GraphicsPath path = new GraphicsPath();
+                path.AddEllipse(0, 0, circularPanel.Width - 1, circularPanel.Height - 1);
+                e.Graphics.SetClip(path);
+                e.Graphics.FillEllipse(new SolidBrush(Color.White), 0, 0, circularPanel.Width - 1, circularPanel.Height - 1);
+            };
+
+            navPanel.Controls.Add(circularPanel);
+
+            // Add logo inside the circular panel
+            PictureBox logo = new PictureBox
+            {
+                Image = Image.FromFile(@"C:\Users\babur\Downloads\Screenshot_2024-12-28_214248-removebg-preview.png"),
+                SizeMode = PictureBoxSizeMode.Zoom,
+                Width = circularPanel.Width - 10,
+                Height = circularPanel.Height - 10,
+                Location = new Point(5, 5)
+            };
+            circularPanel.Controls.Add(logo);
+
+            // Define navigation items with sub-navigation options
+            var navigationItems = new Dictionary<string, string[]>
+    {
+        {"Dashboard", new string[] { }},
+        {"CAR MODELS", new string[] { }},
+        { "Inventory", new[] { "Part Master", "Stock Levels", "Goods Receipt Note (GRN)", "Goods Out" } },
+        { "Production", new[] { "Ongoing Batches", "Completed Batches", "BOM " } },
+        { "Orders", new[] { "Pending Orders", "Processed Orders", "Shipped Orders" } }
+    };
+
+            // Navigation button positioning
+            int totalWidth = 0;
+            List<Button> mainButtons = new List<Button>();
+            foreach (var item in navigationItems)
+            {
+                string mainItem = item.Key.ToUpper();
+                Button mainButton = new Button
+                {
+                    Text = mainItem,
+                    FlatStyle = FlatStyle.Flat,
+                    BackColor = Color.Transparent,
+                    ForeColor = Color.White,
+                    Width = 120,
+                    Height = 35,
+                    Font = new Font("Segoe UI", 9, FontStyle.Regular),
+                    TextAlign = ContentAlignment.MiddleCenter
+                };
+                mainButton.FlatAppearance.BorderSize = 0;
+                mainButton.FlatAppearance.MouseOverBackColor = Color.LightSteelBlue;
+                mainButtons.Add(mainButton);
+                totalWidth += mainButton.Width + 10;
+            }
+
+            // Position buttons
+            int xOffset = 90;
+            foreach (var item in navigationItems)
+            {
+                string mainItem = item.Key.ToUpper();
+                string[] subItems = item.Value;
+                Button mainButton = mainButtons.First(b => b.Text == mainItem);
+
+                mainButton.Location = new Point(xOffset, 30);
+                navPanel.Controls.Add(mainButton);
+                // --- Add vertical line to separate buttons ---
+                // Create a vertical line (Panel) to separate the buttons
+                Panel verticalLine = new Panel
+                {
+                    BackColor = Color.White, // Line color (you can change it)
+                    Location = new Point(xOffset + mainButton.Width, 30), // Position it right after the button
+                    Width = 2, // Width of the line
+                    Height = mainButton.Height, // Match the height of the main button
+                };
+
+                // Add vertical line to navPanel
+                navPanel.Controls.Add(verticalLine);
+                mainButton.Click += (sender, e) => NavigateToPage(mainItem);
+
+                Panel subNavPanel = new Panel
+                {
+                    Visible = false,
+                    BackColor = Color.SteelBlue,
+                    Location = new Point(xOffset, mainButton.Bottom),
+                    Width = mainButton.Width,
+                    Height = subItems.Length * 49
+                };
+                this.Controls.Add(subNavPanel);
+
+                int yOffset = 35;
+                foreach (string subItem in subItems)
+                {
+                    Button subButton = new Button
+                    {
+                        Text = subItem.ToUpper(),
+                        FlatStyle = FlatStyle.Flat,
+                        BackColor = Color.SteelBlue,
+                        ForeColor = Color.White,
+                        Location = new Point(0, yOffset),
+                        Width = mainButton.Width,
+                        Height = 40,
+                        Font = new Font("Segoe UI", 9, FontStyle.Regular),
+                        TextAlign = ContentAlignment.MiddleCenter
+                    };
+                    subButton.FlatAppearance.BorderSize = 1;
+                    subButton.FlatAppearance.MouseOverBackColor = Color.LightSteelBlue;
+                    subButton.Click += (sender, e) => NavigateToPage(subItem);
+                    subNavPanel.Controls.Add(subButton);
+                    yOffset += 40;
+                }
+
+                // Toggle visibility for sub-navigation
+                mainButton.Click += (sender, e) =>
+                {
+                    // Toggle visibility of the sub-navigation panel
+                    subNavPanel.Visible = !subNavPanel.Visible;
+
+                    // Adjust the position of the sub-navigation panel to be below the main button
+                    if (subNavPanel.Visible)
+                    {
+                        subNavPanel.Location = new Point(mainButton.Left, mainButton.Bottom); // Position it below the main button
+                        subNavPanel.BringToFront();
+                    }
+
+                    // Ensure the main button stays visible by setting it explicitly to true
+                    mainButton.Visible = true;
+
+                    // Hide other sub-navigation panels when a new one is clicked, except for dashboardTitlePanel
+                    foreach (Control control in this.Controls)
+                    {
+                        if (control is Panel panel && panel != subNavPanel && panel != navPanel && panel.Name != "dashboardTitlePanel")
+                        {
+                            panel.Visible = false;
+                        }
+                    }// Ensure the dashboardTitlePanel stays visible and at the top
+                    if (dashboardTitlePanel != null)
+                    {
+                        dashboardTitlePanel.Visible = true;
+                        dashboardTitlePanel.BringToFront(); // Bring it to the front
+                    }
+                };
+
+                // Adjust position for next item
+                xOffset += mainButton.Width + 10;
+            }
+        }
+       
+     
+        private void LoadModelNames()
+        {
+          
+            string query = "SELECT ModelName FROM Car_Model"; // Query to fetch ModelName
+
+            using (SqlConnection connection = new SqlConnection(connectionString))
+            {
+                SqlDataAdapter dataAdapter = new SqlDataAdapter(query, connection);
+                DataTable dataTable = new DataTable();
+                dataAdapter.Fill(dataTable);
+
+                // Clear the ComboBox before adding new items
+                comboBox7.Items.Clear();
+
+                // Add items to ComboBox (ModelNames)
+                foreach (DataRow row in dataTable.Rows)
+                {
+                    // Add the ModelName to ComboBox7
+                    comboBox7.Items.Add(row["ModelName"].ToString());
+                }
+
+                // Optionally, set a default selected item
+                if (comboBox7.Items.Count > 0)
+                {
+                    comboBox7.SelectedIndex = 0; // Sets the first item as selected
+                }
+            }
+        }
+        private void textBox11_TextChanged(object sender, EventArgs e)
+        {
+
+        }
+
+        private void dataGridView1_CellContentClick(object sender, DataGridViewCellEventArgs e)
+        {
+         // Check if the clicked cell is not a header cell
+            if (e.RowIndex >= 0)
+            {
+                // Get the current row that was clicked
+                DataGridViewRow selectedRow = dataGridView1.Rows[e.RowIndex];
+
+                // Populate the text boxes with data from the selected row
+                textBox2.Text = selectedRow.Cells["PartName"].Value.ToString();
+                textBox3.Text = selectedRow.Cells["PartDescription"].Value.ToString();
+                comboBox1.SelectedItem = selectedRow.Cells["PartType"].Value.ToString();
+                comboBox7.SelectedItem = selectedRow.Cells["ModelCompatibility"].Value.ToString();
+                textBox4.Text = selectedRow.Cells["BINLocation"].Value.ToString();
+                comboBox3.SelectedItem = selectedRow.Cells["PartStatus"].Value.ToString();
+                textBox5.Text = selectedRow.Cells["UnitPrice"].Value.ToString();
+                numericUpDown1.Value = Convert.ToDecimal(selectedRow.Cells["QuantityAvailable"].Value);
+                textBox11.Text = selectedRow.Cells["Weight"].Value.ToString();
+                textBox12.Text = selectedRow.Cells["Dimensions"].Value.ToString();
+
+
+                
+            }
+        }
+        
+           
+
+        
+
+        private void comboBox7_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            if (comboBox7.SelectedItem != null)
+            {
+                string selectedModelName = comboBox7.SelectedItem.ToString();
+
+                // Retrieve the ModelID based on the selected model name
+                string modelID = GetModelIDByName(selectedModelName);
+
+                // Display the ModelID in TextBox17
+                textBox17.Text = modelID;
+            }
+        }
+
+        private string GetModelIDByName(string modelName)
+        {
+            string modelID = string.Empty;
+            
+            string query = "SELECT ModelID FROM Car_Model WHERE ModelName = @ModelName";
+
+            using (SqlConnection connection = new SqlConnection(connectionString))
+            {
+                SqlCommand command = new SqlCommand(query, connection);
+                command.Parameters.AddWithValue("@ModelName", modelName);
+
+                try
+                {
+                    connection.Open();
+                    var result = command.ExecuteScalar(); // Executes the query and returns the first column of the first row
+
+                    if (result != null)
+                    {
+                        modelID = result.ToString(); // Assign the ModelID value
+                    }
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("Error: " + ex.Message);
+                }
+            }
+
+            return modelID;
+        }
+        private void SetupDataGridView()
+        {
+            // Set the size of the DataGridView
+            dataGridView1.Size = new System.Drawing.Size(1368, 220);
+            dataGridView1.ReadOnly = true;  // Set the grid to be read-only by default
+            dataGridView1.AllowUserToAddRows = false; // Prevent the user from adding rows manually
+
+            dataGridView1.BackgroundColor = Color.White;
+            dataGridView1.BorderStyle = BorderStyle.FixedSingle;
+            dataGridView1.GridColor = Color.SteelBlue; // Set the grid line color
+
+            // Disable unwanted features for a clean look
+            dataGridView1.RowHeadersVisible = false; // Hide the row header
+            dataGridView1.AllowUserToAddRows = false; // Disable adding rows manually
+            dataGridView1.AllowUserToResizeColumns = false; // Prevent resizing columns manually
+
+            // Disable header visual styles to apply custom styles
+            dataGridView1.EnableHeadersVisualStyles = false;
+
+            // Set alternating row colors for better readability
+            dataGridView1.AlternatingRowsDefaultCellStyle.BackColor = Color.LightSteelBlue;
+            dataGridView1.DefaultCellStyle.BackColor = Color.White;
+            dataGridView1.DefaultCellStyle.ForeColor = Color.Black;
+
+            // Highlight selection with Steel Blue theme
+            dataGridView1.DefaultCellStyle.SelectionBackColor = Color.SteelBlue;
+            dataGridView1.DefaultCellStyle.SelectionForeColor = Color.White;
+
+            // Set column header styles
+            dataGridView1.ColumnHeadersDefaultCellStyle.BackColor = Color.SteelBlue; // Background color for headers
+            dataGridView1.ColumnHeadersDefaultCellStyle.ForeColor = Color.White; // Font color for headers
+            dataGridView1.ColumnHeadersDefaultCellStyle.Font = new Font("Segoe UI", 10, FontStyle.Bold); // Font styling
+            dataGridView1.ColumnHeadersDefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter; // Center alignment
+            dataGridView1.ColumnHeadersHeight = 40; // Set column header height
+
+            // Set the row height (optional, you can adjust this based on your needs)
+            dataGridView1.RowTemplate.Height = 40;
+
+            // Enable AutoSize for columns
+            dataGridView1.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+
+            // Optionally, disable sorting on the columns
+            foreach (DataGridViewColumn column in dataGridView1.Columns)
+            {
+                column.SortMode = DataGridViewColumnSortMode.NotSortable;
+            }
+        }
+        private void Form_Load(object sender, EventArgs e)
+        {
+            // Add Part Status options to ComboBox3
+            comboBox3.Items.Add("IN STOCK");
+            comboBox3.Items.Add("OUT OF STOCK");
+            comboBox3.Items.Add("LOW STOCK");
+
+            // Optionally set the default selected item
+            comboBox3.SelectedIndex = 0;  // Set to "Active" by default, or leave as is.
+        }
+        private void comboBox3_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            if (comboBox3 != null && comboBox3.SelectedIndex >= 0)
+            {
+                // Your logic to handle selected index change
+                // For example, handling the selected item from comboBox3:
+                string selectedItem = comboBox3.SelectedItem.ToString();
+                // Handle selectedItem...
+            }
+            else
+            {
+                // Optionally handle the case when comboBox3 is null or no valid selection is made
+                // For example, resetting the UI or showing an error message
+                Console.WriteLine("No valid selection in comboBox3.");
+            }
+        }
+        private void Form1_Load(object sender, EventArgs e)
+        {
+            // Set placeholder text and color for each ComboBox
+            SetComboBoxPlaceholder(comboBox7, "Select a Model");
+            SetComboBoxPlaceholder(comboBox3, "Select a Part");
+            SetComboBoxPlaceholder(comboBox1, "Select a Category");
+
+            // Add categories to ComboBox1
+            comboBox1.Items.Add("Engine");
+            comboBox1.Items.Add("Suspension");
+            comboBox1.Items.Add("Braking");
+            comboBox1.Items.Add("Electrical");
+            comboBox1.Items.Add("Interior");
+            comboBox1.Items.Add("Exterior");
+            comboBox1.Items.Add("Cooling");
+            comboBox1.Items.Add("Fuel System");
+            comboBox1.Items.Add("Transmission");
+            comboBox1.Items.Add("Tires and Wheels");
+            comboBox1.Items.Add("Climate Control and HVAC");
+            comboBox1.Items.Add("Safety and Security");
+            comboBox1.Items.Add("Manufacturing and Assembly Materials");
+       
+            string query = "SELECT PartID, PartName, PartDescription,PartType, ModelCompatibility, BINLocation, PartStatus, UnitPrice, QuantityAvailable, Weight, Dimensions  FROM Parts";
+
+            using (SqlConnection connection = new SqlConnection(connectionString))
+            {
+                try
+                {
+                    connection.Open();
+
+                    // Create DataAdapter and DataTable
+                    SqlDataAdapter dataAdapter = new SqlDataAdapter(query, connection);
+                    DataTable dataTable = new DataTable();
+
+                    // Fill DataTable
+                    dataAdapter.Fill(dataTable);
+
+                    // Bind to DataGridView
+                    dataGridView1.DataSource = dataTable;
+
+                    // Optional: Auto-resize columns
+                    dataGridView1.AutoResizeColumns(DataGridViewAutoSizeColumnsMode.AllCells);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("Error: " + ex.Message);
+                }
+            }
+        }
+        // Helper method to set placeholder text and color for ComboBoxes
+        // Helper method to set placeholder text and color for ComboBoxes
+        private void SetComboBoxPlaceholder(ComboBox comboBox, string placeholderText)
+        {
+            comboBox.Text = placeholderText;
+            comboBox.ForeColor = Color.Gray;  // Set placeholder color
+        }
+
+        // Event: When the ComboBox gets focus, clear the placeholder text
+        private void comboBox_Enter(object sender, EventArgs e)
+        {
+            ComboBox comboBox = (ComboBox)sender;
+            if (comboBox.Text == "Select a Model" || comboBox.Text == "Select a Part" || comboBox.Text == "Select a Category")
+            {
+                comboBox.Text = "";
+                comboBox.ForeColor = Color.Black;  // Set text color to black for user input
+            }
+        }
+
+        // Event: When the ComboBox loses focus, restore the placeholder text if no selection is made
+        private void comboBox_Leave(object sender, EventArgs e)
+        {
+            ComboBox comboBox = (ComboBox)sender;
+            if (string.IsNullOrWhiteSpace(comboBox.Text))
+            {
+                if (comboBox == comboBox7) comboBox.Text = "Select a Model";
+                else if (comboBox == comboBox3) comboBox.Text = "Select a Part";
+                else if (comboBox == comboBox1) comboBox.Text = "Select a Category";
+
+                comboBox.ForeColor = Color.Gray;  // Set placeholder color again
+            }
+        }
+
+        // Event: When the ComboBox selection changes, set the text color to black
+        private void comboBox_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            ComboBox comboBox = (ComboBox)sender;
+            if (comboBox.Text != "Select a Model" && comboBox.Text != "Select a Part" && comboBox.Text != "Select a Category")
+            {
+                comboBox.ForeColor = Color.Black;  // Set text color to black when user selects an item
+            }
+        }
+        private void InitializeTB1()
+        {
+            // Set default text for the TextBox
+            txtSearch.Text = "Enter Part ID or Part Name"; // Set default placeholder text
+
+            // Handle Enter and Leave events
+            txtSearch.Enter += (s, e) =>
+            {
+                if (txtSearch.Text == "Enter Part ID or Part Name")
+                {
+                    txtSearch.Text = ""; // Clear the text when focused
+                    txtSearch.ForeColor = Color.Black; // Change text color to black when editing
+                }
+            };
+
+            txtSearch.Leave += (s, e) =>
+            {
+                if (string.IsNullOrWhiteSpace(txtSearch.Text))
+                {
+                    txtSearch.Text = "Enter Part ID or Part Name"; // Reset the text if nothing is entered
+                    txtSearch.ForeColor = Color.Gray; // Change text color to gray to indicate placeholder text
+                }
+            };
+
+            // Add an event handler for the KeyPress event to detect Enter key press
+            txtSearch.KeyPress += TxtSearch_KeyPress;
+        }
+
+        private void TxtSearch_KeyPress(object sender, KeyPressEventArgs e)
+        {
+            // Check if the Enter key (13) is pressed
+            if (e.KeyChar == (char)13) // Enter key
+            {
+                // Perform the search operation when Enter is pressed
+                FilterDataGridView();
+            }
+        }
+
+        private void FilterDataGridView()
+        {
+            string searchTerm = txtSearch.Text.Trim();
+
+            // If the search term is the placeholder text, do not filter
+            if (searchTerm == "Enter Part ID or Part Name" || string.IsNullOrWhiteSpace(searchTerm))
+            {
+                return;
+            }
+
+            // Create the query to filter the car models based on search term
+            string query = "SELECT PartID, PartName FROM Parts WHERE PartID LIKE @SearchTerm OR PartName LIKE @SearchTerm";
+
+            // Create a parameterized query to prevent SQL injection
+            using (SqlConnection connection = new SqlConnection(connectionString))
+            {
+                SqlDataAdapter dataAdapter = new SqlDataAdapter(query, connection);
+                dataAdapter.SelectCommand.Parameters.AddWithValue("@SearchTerm", "%" + searchTerm + "%");
+
+                DataTable dataTable = new DataTable();
+                dataAdapter.Fill(dataTable);
+
+                // Bind the filtered data to the DataGridView
+                dataGridView1.DataSource = dataTable;
+            }
+        }
+
+
+        private void button2_Click(object sender, EventArgs e)
+        {
+            // Assuming you want to update the selected part with the new values entered by the user
+
+            // Validate the input first
+            if (ValidateForm())
+            {
+                try
+                {
+                    // Update the Part details in the database using the selected PartID
+                    string updateQuery = "UPDATE Parts SET PartName = @PartName, PartDescription = @PartDescription, PartType = @PartType, " +
+                                         "ModelCompatibility = @ModelCompatibility, BINLocation = @BINLocation, PartStatus = @PartStatus, " +
+                                         "UnitPrice = @UnitPrice, QuantityAvailable = @QuantityAvailable, Weight = @Weight, Dimensions = @Dimensions, " +
+                                         "Category = @Category WHERE PartID = @PartID";
+
+                    using (SqlConnection connection = new SqlConnection(connectionString)) // Ensure connection string is set properly
+                    {
+                        // Create a new SqlCommand object
+                        SqlCommand command = new SqlCommand(updateQuery, connection);
+
+                        // Add parameters to the SqlCommand object
+                        command.Parameters.AddWithValue("@PartName", textBox2.Text);
+                        command.Parameters.AddWithValue("@PartDescription", textBox3.Text);
+                        command.Parameters.AddWithValue("@PartType", comboBox1.SelectedItem.ToString());
+                        command.Parameters.AddWithValue("@ModelCompatibility", comboBox7.SelectedItem.ToString());
+                        command.Parameters.AddWithValue("@ModelID", textBox17.Text);  // Ensure ModelID is set correctly
+                        command.Parameters.AddWithValue("@PartStatus", comboBox3.SelectedItem.ToString());
+                        command.Parameters.AddWithValue("@UnitPrice", Convert.ToDecimal(textBox5.Text));
+                        command.Parameters.AddWithValue("@Weight", Convert.ToDecimal(textBox11.Text));
+                        command.Parameters.AddWithValue("@Dimensions", textBox12.Text);
+                        command.Parameters.AddWithValue("@QuantityAvailable", numericUpDown1.Value);
+                        command.Parameters.AddWithValue("@BINLocation", textBox4.Text);
+                      
+
+                        // Open the connection before executing the command
+                        connection.Open();
+
+                        // Execute the query to update the data
+                        command.ExecuteNonQuery();
+
+                        // Optionally, refresh the DataGridView to reflect the changes
+                        RefreshDataGridView();
+
+                        // Show success message
+                        MessageBox.Show("Part details updated successfully.", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // Handle any errors that occur during the update operation
+                    MessageBox.Show($"An error occurred while updating part data: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
+        }
+
+        private void button4_Click(object sender, EventArgs e)
+        {
+
+            // Clear the search text box
+            txtSearch.Text = "Enter Model ID or Model Name"; // Reset to default placeholder text
+            txtSearch.ForeColor = Color.Gray; // Reset text color to gray (for placeholder)
+       
+            // Reset specific TextBoxes to empty
+            textBox1.Clear();
+            textBox2.Clear();
+            textBox3.Clear();
+            textBox5.Clear();
+            textBox17.Clear();
+            textBox11.Clear();
+            textBox12.Clear();
+            textBox4.Clear();
+
+            // Reset specific ComboBoxes to the default selection (can set to -1 for no selection)
+            comboBox1.SelectedIndex = -1; // Reset ComboBox1
+            comboBox7.SelectedIndex = -1; // Reset ComboBox7
+            comboBox3.SelectedIndex = -1; // Reset ComboBox3
+
+            // Reset NumericUpDown control to the default value (e.g., 0 or the initial value)
+            numericUpDown1.Value = numericUpDown1.Minimum; // Reset NumericUpDown1 to its minimum value
+
+            // Optionally, reset any other controls if needed
+        }
+
+        private void txtSearch_TextChanged(object sender, EventArgs e)
+        {
+
+        }
+
+     
+
+
+
+        private void SetPartID()
+        {
+            string query = "SELECT MAX(PartID) FROM Parts";
+
+            using (SqlConnection connection = new SqlConnection(connectionString))
+            {
+                try
+                {
+                    connection.Open();
+                    using (SqlCommand command = new SqlCommand(query, connection))
+                    {
+                        var result = command.ExecuteScalar();
+
+                        if (result != DBNull.Value)
+                        {
+                            // If there are records, increment the highest PartID
+                            int nextPartID = Convert.ToInt32(result) + 1;
+                            textBox1.Text = nextPartID.ToString();
+                        }
+                        else
+                        {
+                            // If there are no records, start with PartID = 1
+                            textBox1.Text = "1";
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"An error occurred while fetching PartID: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
+        }
+
+        private bool isDataEntryMode = true; // Flag to check if the form is in data entry mode
+
+        private void button1_Click(object sender, EventArgs e)
+        {
+            if (isDataEntryMode)
+            {
+                // Clear all the fields for new data entry
+                ClearFields();
+
+                // Set Part ID (fetch the next available ID)
+                SetPartID();
+
+                // Change button text to "Save"
+                button1.Text = "Save";
+                isDataEntryMode = false; // Switch to save mode
+            }
+            else
+            {
+                // Save the part data
+                if (ValidateForm())
+                {
+                    SavePartData();
+                    // After saving, clear fields and reset form for the next entry
+                    ClearFields();
+                    SetPartID(); // Reset the Part ID for the next part
+                    button1.Text = "ADD"; // Change button text back
+                    isDataEntryMode = true; // Switch back to data entry mode
+                }
+                else
+                {
+                    MessageBox.Show("Please fill in all required fields.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+            }
+        }
+
+        private void ClearFields()
+        {
+            txtSearch.Text = "Enter Model ID or Model Name"; // Reset to default placeholder text
+            txtSearch.ForeColor = Color.Gray; // Reset text color to gray (for placeholder)
+
+            // Reset specific TextBoxes to empty
+            textBox1.Clear();
+            textBox2.Clear();
+            textBox3.Clear();
+            textBox5.Clear();
+            textBox17.Clear();
+            textBox11.Clear();
+            textBox12.Clear();
+            textBox4.Clear();
+
+            // Reset specific ComboBoxes to the default selection (can set to -1 for no selection)
+            comboBox1.SelectedIndex = -1; // Reset ComboBox1
+            comboBox7.SelectedIndex = -1; // Reset ComboBox7
+            comboBox3.SelectedIndex = -1; // Reset ComboBox3
+
+            // Reset NumericUpDown control to the default value (e.g., 0 or the initial value)
+            numericUpDown1.Value = numericUpDown1.Minimum; // Reset NumericUpDown1 to its minimum value
+        }
+        // Unit Price TextBox KeyPress Event
+        private void textBox5_KeyPress(object sender, KeyPressEventArgs e)
+        {
+            // Allow only digits, backspace, and a single dot for decimal places
+            if (!char.IsDigit(e.KeyChar) && e.KeyChar != (char)8 && e.KeyChar != '.')
+            {
+                e.Handled = true; // Ignore the invalid key press
+            }
+
+            // Allow only one dot for decimal input
+            if (e.KeyChar == '.' && textBox5.Text.Contains("."))
+            {
+                e.Handled = true; // Ignore if the dot already exists
+            }
+        }
+
+        // Weight TextBox KeyPress Event
+        private void textBox11_KeyPress(object sender, KeyPressEventArgs e)
+        {
+            // Allow only digits, backspace, and a single dot for decimal places
+            if (!char.IsDigit(e.KeyChar) && e.KeyChar != (char)8 && e.KeyChar != '.')
+            {
+                e.Handled = true; // Ignore the invalid key press
+            }
+
+            // Allow only one dot for decimal input
+            if (e.KeyChar == '.' && textBox11.Text.Contains("."))
+            {
+                e.Handled = true; // Ignore if the dot already exists
+            }
+        }
+
+        // Dimensions TextBox KeyPress Event
+        private void textBox12_KeyPress(object sender, KeyPressEventArgs e)
+        {
+            // Allow numbers and 'x' symbol, and backspace
+            if (!Char.IsDigit(e.KeyChar) && e.KeyChar != 'x' && e.KeyChar != (char)8)
+            {
+                e.Handled = true;  // Ignore invalid input
+            }
+
+            // Automatically insert 'x' between width, height, and depth
+            if (textBox12.Text.Length == 3 || textBox12.Text.Length == 7)
+            {
+                // Insert 'x' after entering 3 digits or 7 digits (e.g., after width or height)
+                textBox12.Text += 'x';
+                textBox12.SelectionStart = textBox12.Text.Length; // Keep the cursor at the end
+            }
+        }
+
+        private bool ValidateForm()
+        {
+            // Validate Part Name
+            if (string.IsNullOrEmpty(textBox1.Text))
+            {
+                MessageBox.Show("Please enter Part Name.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
+
+            // Validate Part Description
+            if (string.IsNullOrEmpty(textBox2.Text))
+            {
+                MessageBox.Show("Please enter Part Description.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
+
+            // Validate Category selection
+            if (comboBox1.SelectedIndex < 0)
+            {
+                MessageBox.Show("Please select a Category.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
+
+            // Validate Model Compatibility selection
+            if (comboBox7.SelectedIndex < 0)
+            {
+                MessageBox.Show("Please select Model Compatibility.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
+
+            // Validate Part Status selection
+            if (comboBox3.SelectedIndex < 0)
+            {
+                MessageBox.Show("Please select Part Status.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
+
+            // Validate Unit Price (should be a valid decimal number)
+            if (!decimal.TryParse(textBox5.Text, out _))
+            {
+                MessageBox.Show("Please enter a valid Unit Price.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
+
+            // Validate Weight (should be a valid decimal number)
+            if (!decimal.TryParse(textBox11.Text, out _))
+            {
+                MessageBox.Show("Please enter a valid Weight.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
+
+            // Validate Dimensions (should be in the format "WidthxHeightxDepth" e.g., 150x50x40)
+            if (!IsValidDimensionsFormat(textBox12.Text))
+            {
+                MessageBox.Show("Please enter valid Dimensions in the format 'WidthxHeightxDepth' (e.g., 150x50x40).", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
+
+            // Validate Quantity Available (should be greater than 0)
+            if (numericUpDown1.Value <= 0)
+            {
+                MessageBox.Show("Please enter a valid Quantity Available.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
+
+            return true; // All fields are valid
+        }
+        private bool IsValidDimensionsFormat(string dimensions)
+        {
+            // Regex to match the pattern: 150x50x40 (numbers with 'x' separating them)
+            return System.Text.RegularExpressions.Regex.IsMatch(dimensions, @"^\d+x\d+x\d+$");
+        }
+
+        private void SavePartData()
+        {
+            string query = "INSERT INTO Parts( PartName, PartDescription,PartType, ModelCompatibility,ModelID, PartStatus, UnitPrice, Weight, Dimensions, QuantityAvailable, BinLocation) " +
+                           "VALUES (@PartName, @PartDescription,@PartType, @ModelCompatibility,@ModelID, @PartStatus, @UnitPrice, @Weight, @Dimensions, @QuantityAvailable, @BinLocation)";
+
+            using (SqlConnection connection = new SqlConnection(connectionString))
+            {
+                try
+                {
+                    connection.Open();
+                    using (SqlCommand command = new SqlCommand(query, connection))
+                    {
+
+                        command.Parameters.AddWithValue("@PartName", textBox2.Text);
+                        command.Parameters.AddWithValue("@PartDescription", textBox3.Text);
+                        command.Parameters.AddWithValue("@PartType", comboBox1.SelectedItem.ToString());
+                        command.Parameters.AddWithValue("@ModelCompatibility", comboBox7.SelectedItem.ToString());
+                        command.Parameters.AddWithValue("@ModelID", textBox17.Text);
+                        command.Parameters.AddWithValue("@PartStatus", comboBox3.SelectedItem.ToString());
+                        command.Parameters.AddWithValue("@UnitPrice", Convert.ToDecimal(textBox5.Text));
+                        command.Parameters.AddWithValue("@Weight", Convert.ToDecimal(textBox11.Text));
+                        command.Parameters.AddWithValue("@Dimensions", textBox12.Text);
+                        command.Parameters.AddWithValue("@QuantityAvailable", numericUpDown1.Value);
+                        command.Parameters.AddWithValue("@BinLocation", textBox4.Text);
+
+                        command.ExecuteNonQuery(); // Execute the query to insert data
+                                                   // Optionally, you can show a success message
+                        MessageBox.Show("Part data saved successfully.", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+                        // After saving, refresh the DataGridView to reflect the new data
+                        RefreshDataGridView();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // Handle any errors that occur during the insert operation
+                    MessageBox.Show($"An error occurred while saving part data: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+               
+                
+            }
+        }
+
+
+        private void RefreshDataGridView()
+        {
+            string query = "SELECT * FROM Parts"; // Query to fetch all parts from the database
+            using (SqlConnection connection = new SqlConnection(connectionString))
+            {
+                try
+                {
+                    connection.Open();
+                    using (SqlDataAdapter adapter = new SqlDataAdapter(query, connection))
+                    {
+                        DataTable dataTable = new DataTable();
+                        adapter.Fill(dataTable); // Fill the data into the DataTable
+                        dataGridView1.DataSource = dataTable; // Bind the data to the DataGridView
+                    }
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"An error occurred while refreshing the data: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
+        }
+
+
+
+
+
+
+
+
+
+
+
+
+
+        private void textBox1_TextChanged(object sender, EventArgs e)
+        {
+
+        }
+
+        private void comboBox1_SelectedIndexChanged(object sender, EventArgs e)
+        {
+
+        }
+
+        private void PartMaster_Load(object sender, EventArgs e)
+        {
+
+        }
+        private void NavigateToPage(string pageName)
+        {
+            if (pageName == "DASHBOARD")
+            {
+                // Create an instance of the Dashboard form
+                dashboard dashboardForm = new dashboard();
+
+                // Maximize the form
+                dashboardForm.WindowState = FormWindowState.Maximized;
+
+                // Show the Dashboard form
+                dashboardForm.Show();
+
+                // Optionally, hide the current form if you don't want it visible
+                this.Hide();
+            }
+            else if (pageName == "CAR MODELS")
+            {
+                // Create an instance of the CarModel form
+                CarModel carModelForm = new CarModel();
+
+                // Maximize the form
+                carModelForm.WindowState = FormWindowState.Maximized;
+
+                // Show the CarModel form
+                carModelForm.Show();
+
+                // Optionally, hide the current form if you don't want it visible
+                this.Hide();
+            }
+            else if (pageName == "PART MASTER")
+            {
+                // Create an instance of the PartMaster form
+                PartMaster partMaster = new PartMaster();
+
+                // Maximize the form
+                partMaster.WindowState = FormWindowState.Maximized;
+
+                // Show the PartMaster form
+                partMaster.Show();
+
+                // Optionally, hide the current form if you don't want it visible
+                this.Hide();
+            }
+            else if (pageName == "STOCK LEVEL")
+            {
+                // Create an instance of the StockLevel form
+                StockLevel stockLevel = new StockLevel();
+
+                // Maximize the form
+                stockLevel.WindowState = FormWindowState.Maximized;
+
+                // Show the StockLevel form
+                stockLevel.Show();
+
+                // Optionally, hide the current form if you don't want it visible
+                this.Hide();
+            }
+            else
+            {
+
+            }
+        }
+    }
+}
+
+
+
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Data;
+using System.Data.SqlClient;
+using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+
+namespace CarManufacture
+{
+    public partial class CarModel : Form
+    {
+        string connectionString = @"Server=KRYSTAL\MSSQLSERVER01;Database=training;Integrated Security=True;";
+
+
+        // Declare at the top of the form's class, outside any methods
+        private Panel titlePanel;
+
+        public CarModel()
+        {
+            InitializeComponent();
+            InitializeNavigationBar();
+            // Load car models into the DataGridView when the form is opened
+            LoadCarModels();
+            AddEnhancedTitle();
+            SetupDataGridView();
+            InitializeTB1();
+
+
+
+
+        }
+
+
+
+        private void AddEnhancedTitle()
+        {
+            // Initialize the titlePanel only once
+            titlePanel = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 65,
+                BackColor = Color.LightSlateGray // Background color for the title panel
+            };
+
+            // Add the titlePanel to the form's controls
+            this.Controls.Add(titlePanel);
+
+            // Create a label for the title
+            Label titleLabel = new Label
+            {
+                Text = "CAR MODELS",
+                Font = new Font("Segoe UI", 20, FontStyle.Bold), // Larger font, bold styling
+                AutoSize = true,
+                ForeColor = Color.White, // Text color contrasting with the background
+                TextAlign = ContentAlignment.MiddleCenter
+            };
+
+            // Add the title label to the titlePanel
+            titlePanel.Controls.Add(titleLabel);
+
+            // Handle resizing to keep the label vertically centered with equal spacing
+            titlePanel.SizeChanged += (s, e) =>
+            {
+                int verticalOffset = (titlePanel.Height - titleLabel.Height) / 2; // Calculate vertical center
+                titleLabel.Location = new Point((titlePanel.Width - titleLabel.Width) / 2, verticalOffset);
+            };
+
+            // Trigger initial location adjustment
+            titleLabel.Location = new Point((titlePanel.Width - titleLabel.Width) / 2, (titlePanel.Height - titleLabel.Height) / 2);
+
+            // Add a bottom border to the title panel for visual separation
+            Panel bottomBorder = new Panel
+            {
+                Dock = DockStyle.Bottom,
+                Height = 3,
+                BackColor = Color.White // Thin white line to emphasize the separation
+            };
+
+            // Add the bottom border to the titlePanel
+            titlePanel.Controls.Add(bottomBorder);
+        }
+
+        private void InitializeNavigationBar()
+        {
+            // Create a navigation panel
+            Panel navPanel = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 100,
+                BackColor = Color.SteelBlue // Set background color for the navigation bar
+            };
+
+            this.Controls.Add(navPanel); // Add navigation bar to the form
+
+            // Create a circular container for the logo and text
+            Panel circularPanel = new Panel
+            {
+                Width = 70, // Adjust the size of the circle
+                Height = 70, // Adjust the size of the circle
+                Location = new Point(10, 15), // Position on the navPanel
+                BackColor = Color.Transparent, // Transparent background for circular shape
+                Padding = new Padding(5)
+            };
+
+            // Override the OnPaint method to draw a circle inside the panel
+            circularPanel.Paint += (sender, e) =>
+            {
+                // Create a circular path to draw
+                GraphicsPath path = new GraphicsPath();
+                path.AddEllipse(0, 0, circularPanel.Width - 1, circularPanel.Height - 1);
+
+                // Set the clipping region to the circular path
+                e.Graphics.SetClip(path);
+
+                // Draw the background color for the circle
+                e.Graphics.FillEllipse(new SolidBrush(Color.White), 0, 0, circularPanel.Width - 1, circularPanel.Height - 1);
+            };
+
+            navPanel.Controls.Add(circularPanel); // Add circular panel to the navPanel
+
+            // Add logo inside the circular panel
+            PictureBox logo = new PictureBox
+            {
+                Image = Image.FromFile(@"C:\Users\babur\Downloads\Screenshot_2024-12-28_214248-removebg-preview.png"),
+                SizeMode = PictureBoxSizeMode.Zoom, // Maintain aspect ratio
+                Width = circularPanel.Width - 10, // Adjust width to fit within the circle
+                Height = circularPanel.Height - 10, // Adjust height to fit within the circle
+                Location = new Point(5, 5) // Add some padding inside the circle
+            };
+            circularPanel.Controls.Add(logo); // Add logo inside the circular panel
+
+
+
+            // Define navigation items with sub-navigation options
+            var navigationItems = new Dictionary<string, string[]>
+    {
+        {"Dashboard", new string[] {}},
+         {"CAR MODELS", new string[] {}},
+        { "Inventory", new[] { "Part Master", "Stock Levels", "Goods Receipt Note (GRN)", "Goods Out" } },
+        { "Production", new[] { "Ongoing Batches", "Completed Batches", "BOM " } },
+        { "Orders", new[] { "Pending Orders", "Processed Orders", "Shipped Orders" } }
+    };
+
+            // Center the navigation buttons in the navPanel
+            int totalWidth = 0;
+            List<Button> mainButtons = new List<Button>();
+
+            // First pass: Calculate the total width needed for the buttons
+            foreach (var item in navigationItems)
+            {
+                string mainItem = item.Key.ToUpper(); // Convert to uppercase
+                Button mainButton = new Button
+                {
+                    Text = mainItem,
+                    FlatStyle = FlatStyle.Flat,
+                    BackColor = Color.Transparent,
+                    ForeColor = Color.White,
+                    Width = 120,
+                    Height = 35,
+                    Font = new Font("Segoe UI", 9, FontStyle.Regular),
+                    TextAlign = ContentAlignment.MiddleCenter
+                };
+
+                mainButton.FlatAppearance.BorderSize = 0;
+                mainButton.FlatAppearance.MouseOverBackColor = Color.LightSteelBlue;
+
+                mainButtons.Add(mainButton);
+                totalWidth += mainButton.Width + 10; // Add space between buttons
+            }
+
+            // Calculate the starting position to center the buttons
+            int startX = (navPanel.Width - totalWidth) / 2;
+
+            // Second pass: Position buttons
+            int xOffset = startX = 90;
+            foreach (var item in navigationItems)
+            {
+                string mainItem = item.Key.ToUpper(); // Convert to uppercase
+                string[] subItems = item.Value;
+
+                // Create a button for the main navigation item
+                Button mainButton = mainButtons.First(b => b.Text == mainItem);
+
+                mainButton.Location = new Point(xOffset, 30); // Position button
+                navPanel.Controls.Add(mainButton);
+
+                // --- Add vertical line to separate buttons ---
+                // Create a vertical line (Panel) to separate the buttons
+                Panel verticalLine = new Panel
+                {
+                    BackColor = Color.White, // Line color (you can change it)
+                    Location = new Point(xOffset + mainButton.Width, 30), // Position it right after the button
+                    Width = 2, // Width of the line
+                    Height = mainButton.Height, // Match the height of the main button
+                };
+
+                // Add vertical line to navPanel
+                navPanel.Controls.Add(verticalLine);
+                // --- End of vertical line code ---
+                mainButton.Click += (sender, e) => NavigateToPage(mainItem);
+
+                // Create a panel for the sub-navigation items
+                Panel subNavPanel = new Panel
+                {
+                    Visible = false, // Initially hidden
+                    BackColor = Color.SteelBlue,
+                    Location = new Point(xOffset, mainButton.Bottom), // Position below the main button
+                    Width = mainButton.Width, // Match width of the main button
+                    Height = subItems.Length * 49// Adjust height based on the number of sub-items
+                };
+                this.Controls.Add(subNavPanel);
+
+                // Add sub-navigation buttons
+                int yOffset = 35;
+                foreach (string subItem in subItems)
+                {
+                    Button subButton = new Button
+                    {
+                        Text = subItem.ToUpper(), // Convert to uppercase
+                        FlatStyle = FlatStyle.Flat,
+                        BackColor = Color.SteelBlue,
+                        ForeColor = Color.White,
+                        Location = new Point(0, yOffset), // Position within the sub-panel
+                        Width = mainButton.Width, // Match width of the main button
+                        Height = 40,
+                        Font = new Font("Segoe UI", 9, FontStyle.Regular),
+                        TextAlign = ContentAlignment.MiddleCenter
+                    };
+
+                    subButton.FlatAppearance.BorderSize = 1;
+                    subButton.FlatAppearance.MouseOverBackColor = Color.LightSteelBlue;
+
+                    // Add click event for sub-navigation buttons
+                    subButton.Click += (sender, e) => NavigateToPage(subItem);
+
+                    subNavPanel.Controls.Add(subButton);
+                    yOffset += 40; // Increment yOffset for the next button
+                }
+
+                // Add a click event to toggle sub-navigation visibility
+                mainButton.Click += (sender, e) =>
+                {
+                    // Toggle the visibility of the sub-navigation panel below the main button
+                    subNavPanel.Visible = !subNavPanel.Visible;
+                    // Bring the sub-navigation panel to the front if it is made visible
+                    if (subNavPanel.Visible)
+                    {
+                        subNavPanel.BringToFront();
+                    }
+                    // Hide other sub-navigation panels when a new one is clicked
+                    foreach (Control control in this.Controls)
+                    {
+                        if (control is Panel panel && panel != subNavPanel && panel != navPanel)
+                        {
+                            panel.Visible = false;
+                        }
+                        // Ensure the chart panel is always visible
+                        var chartPanel = this.Controls.OfType<Panel>().FirstOrDefault(p => p.Name == "ChartPanel");
+                        if (chartPanel != null)
+                        {
+                            chartPanel.Visible = true;
+                        }
+                        // Ensure the alert panel is always visible
+                        var alertPanel = this.Controls.OfType<Panel>().FirstOrDefault(p => p.Name == "AlertPanel");
+                        if (alertPanel != null)
+                        {
+                            alertPanel.Visible = true;
+                        }
+                        dataGridView1.Visible = true;  // Make flowLayoutPanel1 always visible
+                        titlePanel.Visible = true;  // Make titlePanel always visible
+
+                        // Ensure that flowLayoutPanel1 goes behind other controls
+                        dataGridView1.SendToBack();  // Send flowLayoutPanel1 behind other panels
+
+
+
+                    }
+
+                };
+
+                // Adjust xOffset for the next main button (include space for vertical line)
+                xOffset += mainButton.Width + 10 + verticalLine.Width;
+            }
+            // Add "Login" button at the rightmost position
+            Button loginButton = new Button
+            {
+                Text = "LOGIN", // Text for login button
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.Transparent,
+                ForeColor = Color.White,
+                Font = new Font("Segoe UI", 9, FontStyle.Bold),
+                TextAlign = ContentAlignment.MiddleCenter,
+                Width = 70,
+                Height = 30
+            };
+
+            loginButton.FlatAppearance.BorderSize = 0;
+            loginButton.FlatAppearance.MouseOverBackColor = Color.LightSteelBlue;
+            loginButton.Location = new Point(1500 - loginButton.Width - 20, 30);
+
+
+
+
+
+            // Add underline effect to the "Login" button
+            loginButton.Paint += (sender, e) =>
+            {
+                e.Graphics.DrawLine(new Pen(Color.White, 1), 0, loginButton.Height - 1, loginButton.Width, loginButton.Height - 1);
+            };
+
+            navPanel.Controls.Add(loginButton);
+        }
+
+
+
+        // Method to handle navigation
+
+
+        private void dataGridView1_CellClick(object sender, DataGridViewCellEventArgs e)
+        {
+            // Ensure that the click is on a button column (Edit or Delete)
+            if (e.RowIndex >= 0 && e.ColumnIndex >= 0)
+            {
+                if (dataGridView1.Columns[e.ColumnIndex] is DataGridViewButtonColumn)
+                {
+                    int modelID = Convert.ToInt32(dataGridView1.Rows[e.RowIndex].Tag); // Get the ModelID from the row's Tag
+
+                    if (dataGridView1.Columns[e.ColumnIndex].HeaderText == "Edit")
+                    {
+                        // Handle the Edit button click
+                        // For example, open the Edit form and pass the ModelID for editing
+                        EditCarModel(modelID);
+                    }
+                    else if (dataGridView1.Columns[e.ColumnIndex].HeaderText == "Delete")
+                    {
+                        // Handle the Delete button click
+                        // For example, show a confirmation dialog and delete the selected car model
+                        DeleteCarModel(modelID);
+                    }
+                }
+            }
+        }
+
+        private void EditCarModel(int modelID)
+        {
+            // Code to open the Edit form for the selected car model
+            // You can pass the modelID to the form for editing
+            MessageBox.Show($"Edit car model with ID: {modelID}");
+        }
+
+        private void DeleteCarModel(int modelID)
+        {
+            // Code to delete the car model from the database
+            MessageBox.Show($"Delete car model with ID: {modelID}");
+
+            // Optionally, remove the row from the DataGridView after deletion
+            // Example:
+            foreach (DataGridViewRow row in dataGridView1.Rows)
+            {
+                if (Convert.ToInt32(row.Tag) == modelID)
+                {
+                    dataGridView1.Rows.Remove(row);
+                    break;
+                }
+            }
+        }
+        private void SetupDataGridView()
+        {
+            // Set the size of the DataGridView
+            dataGridView1.Size = new System.Drawing.Size(1368, 220);
+            dataGridView1.ReadOnly = true;  // Set the grid to be read-only by default
+            dataGridView1.AllowUserToAddRows = false; // Prevent the user from adding rows manually
+
+            dataGridView1.BackgroundColor = Color.White;
+            dataGridView1.BorderStyle = BorderStyle.FixedSingle;
+            dataGridView1.GridColor = Color.SteelBlue; // Set the grid line color
+
+            // Disable unwanted features for a clean look
+            dataGridView1.RowHeadersVisible = false; // Hide the row header
+            dataGridView1.AllowUserToAddRows = false; // Disable adding rows manually
+            dataGridView1.AllowUserToResizeColumns = false; // Prevent resizing columns manually
+
+            // Disable header visual styles to apply custom styles
+            dataGridView1.EnableHeadersVisualStyles = false;
+
+            // Set alternating row colors for better readability
+            dataGridView1.AlternatingRowsDefaultCellStyle.BackColor = Color.LightSteelBlue;
+            dataGridView1.DefaultCellStyle.BackColor = Color.White;
+            dataGridView1.DefaultCellStyle.ForeColor = Color.Black;
+
+            // Highlight selection with Steel Blue theme
+            dataGridView1.DefaultCellStyle.SelectionBackColor = Color.SteelBlue;
+            dataGridView1.DefaultCellStyle.SelectionForeColor = Color.White;
+
+            // Set column header styles
+            dataGridView1.ColumnHeadersDefaultCellStyle.BackColor = Color.SteelBlue; // Background color for headers
+            dataGridView1.ColumnHeadersDefaultCellStyle.ForeColor = Color.White; // Font color for headers
+            dataGridView1.ColumnHeadersDefaultCellStyle.Font = new Font("Segoe UI", 10, FontStyle.Bold); // Font styling
+            dataGridView1.ColumnHeadersDefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter; // Center alignment
+            dataGridView1.ColumnHeadersHeight = 40; // Set column header height
+
+            // Set the row height (optional, you can adjust this based on your needs)
+            dataGridView1.RowTemplate.Height = 40;
+
+            // Enable AutoSize for columns
+            dataGridView1.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+
+            // Optionally, disable sorting on the columns
+            foreach (DataGridViewColumn column in dataGridView1.Columns)
+            {
+                column.SortMode = DataGridViewColumnSortMode.NotSortable;
+            }
+        }
+
+        private void LoadCarModels()
+        {
+            // Query to fetch car models from the database
+            string query = "SELECT ModelID, ModelName, Category, PriceRange FROM Car_Model";
+
+            using (SqlConnection connection = new SqlConnection(connectionString))
+            {
+                SqlDataAdapter dataAdapter = new SqlDataAdapter(query, connection);
+                DataTable dataTable = new DataTable();
+                dataAdapter.Fill(dataTable); // Fill the DataTable with data from the database
+
+                // Set the data source of the DataGridView to the loaded data
+                dataGridView1.DataSource = dataTable;
+            }
+        }
+
+        private void InitializeTB1()
+        {
+            // Set default text for the TextBox
+            txtSearch.Text = "Enter Model ID or Model Name"; // Set default placeholder text
+
+            // Handle Enter and Leave events
+            txtSearch.Enter += (s, e) =>
+            {
+                if (txtSearch.Text == "Enter Model ID or Model Name")
+                {
+                    txtSearch.Text = ""; // Clear the text when focused
+                    txtSearch.ForeColor = Color.Black; // Change text color to black when editing
+                }
+            };
+
+            txtSearch.Leave += (s, e) =>
+            {
+                if (string.IsNullOrWhiteSpace(txtSearch.Text))
+                {
+                    txtSearch.Text = "Enter Model ID or Model Name"; // Reset the text if nothing is entered
+                    txtSearch.ForeColor = Color.Gray; // Change text color to gray to indicate placeholder text
+                }
+            };
+
+            // Add an event handler for the KeyPress event to detect Enter key press
+            txtSearch.KeyPress += TxtSearch_KeyPress;
+        }
+
+        private void TxtSearch_KeyPress(object sender, KeyPressEventArgs e)
+        {
+            // Check if the Enter key (13) is pressed
+            if (e.KeyChar == (char)13) // Enter key
+            {
+                // Perform the search operation when Enter is pressed
+                FilterDataGridView();
+            }
+        }
+
+        private void FilterDataGridView()
+        {
+            string searchTerm = txtSearch.Text.Trim();
+
+            // If the search term is the placeholder text, do not filter
+            if (searchTerm == "Enter Model ID or Model Name" || string.IsNullOrWhiteSpace(searchTerm))
+            {
+                return;
+            }
+
+            // Create the query to filter the car models based on search term
+            string query = "SELECT ModelID, ModelName, Category, PriceRange FROM Car_Model WHERE ModelID LIKE @SearchTerm OR ModelName LIKE @SearchTerm";
+
+            // Create a parameterized query to prevent SQL injection
+            using (SqlConnection connection = new SqlConnection(connectionString))
+            {
+                SqlDataAdapter dataAdapter = new SqlDataAdapter(query, connection);
+                dataAdapter.SelectCommand.Parameters.AddWithValue("@SearchTerm", "%" + searchTerm + "%");
+
+                DataTable dataTable = new DataTable();
+                dataAdapter.Fill(dataTable);
+
+                // Bind the filtered data to the DataGridView
+                dataGridView1.DataSource = dataTable;
+            }
+        }
+
+
+
+        private void CarModel_Load(object sender, EventArgs e)
+        {
+
+        }
+
+        private void flowLayoutPanel1_Paint(object sender, PaintEventArgs e)
+        {
+
+
+        }
+
+        private void button2_Click(object sender, EventArgs e)
+        {
+
+        }
+
+        private void button3_Click(object sender, EventArgs e)
+        {
+
+        }
+
+        private void button1_Click(object sender, EventArgs e)
+        {
+
+        }
+
+        private void button4_Click(object sender, EventArgs e)
+        {
+
+            // Clear the search text box
+            txtSearch.Text = "Enter Model ID or Model Name"; // Reset to default placeholder text
+            txtSearch.ForeColor = Color.Gray; // Reset text color to gray (for placeholder)
+
+            // Load the original data to reset the DataGridView
+            LoadCarModels(); // You should already have a method like this to reload all data from the database
+        }
+        private void NavigateToPage(string pageName)
+        {
+            if (pageName == "DASHBOARD")
+            {
+                // Create an instance of the Dashboard form
+                dashboard dashboardForm = new dashboard();
+
+                // Maximize the form
+                dashboardForm.WindowState = FormWindowState.Maximized;
+
+                // Show the Dashboard form
+                dashboardForm.Show();
+
+                // Optionally, hide the current form if you don't want it visible
+                this.Hide();
+            }
+            else if (pageName == "CAR MODELS")
+            {
+                // Create an instance of the CarModel form
+                CarModel carModelForm = new CarModel();
+
+                // Maximize the form
+                carModelForm.WindowState = FormWindowState.Maximized;
+
+                // Show the CarModel form
+                carModelForm.Show();
+
+                // Optionally, hide the current form if you don't want it visible
+                this.Hide();
+            }
+            else if (pageName == "PART MASTER")
+            {
+                // Create an instance of the PartMaster form
+                PartMaster partMaster = new PartMaster();
+
+                // Maximize the form
+                partMaster.WindowState = FormWindowState.Maximized;
+
+                // Show the PartMaster form
+                partMaster.Show();
+
+                // Optionally, hide the current form if you don't want it visible
+                this.Hide();
+            }
+            else if (pageName == "STOCK LEVEL")
+            {
+                // Create an instance of the StockLevel form
+                StockLevel stockLevel = new StockLevel();
+
+                // Maximize the form
+                stockLevel.WindowState = FormWindowState.Maximized;
+
+                // Show the StockLevel form
+                stockLevel.Show();
+
+                // Optionally, hide the current form if you don't want it visible
+                this.Hide();
+            }
+            else
+            {
+
+            }
+        }
+
+    }
+}
+
+
+
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Data;
+using System.Data.SqlClient;
+using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+using static System.Windows.Forms.VisualStyles.VisualStyleElement;
+using static System.Windows.Forms.VisualStyles.VisualStyleElement.ToolBar;
+
+namespace CarManufacture
+{
+    public partial class BOM : Form
+    {
+        string connectionString = @"Server=KRYSTAL\MSSQLSERVER01;Database=training;Integrated Security=True;";
+        public BOM()
+        {
+            InitializeComponent();
+            InitializeNavigationBar();
+            AddEnhancedTitle();
+            InitializeDataGridView();
+            dataGridView1.CellClick += new DataGridViewCellEventHandler(dataGridView1_CellContentClick_1);
+    
+            InitializeEditButton();
+            InitializeClearButton();
+            LoadCarModels();
+            InitializeModelInfoPanel();
+            InitializeComboBox1();
+     
+        
+
+            }
+
+  
+
+
+
+        private void InitializeNavigationBar()
+        {
+            // Create a navigation panel
+            Panel navPanel = new Panel
+            {
+                Name = "navPanel", // Add a name for easy reference
+                Dock = DockStyle.Top,
+                Height = 100,
+                BackColor = Color.SteelBlue // Set background color for the navigation bar
+            };
+
+            this.Controls.Add(navPanel); // Add navigation bar to the form
+
+            // Ensure dashboardTitlePanel is always visible and at the top
+            var dashboardTitlePanel = this.Controls.OfType<Panel>().FirstOrDefault(p => p.Name == "dashboardTitlePanel");
+            if (dashboardTitlePanel != null)
+            {
+                dashboardTitlePanel.BringToFront();
+            }
+
+            // Create a circular container for the logo and text
+            Panel circularPanel = new Panel
+            {
+                Width = 70, // Adjust the size of the circle
+                Height = 70,
+                Location = new Point(10, 15), // Position on the navPanel
+                BackColor = Color.Transparent, // Transparent background for circular shape
+                Padding = new Padding(5)
+            };
+
+            circularPanel.Paint += (sender, e) =>
+            {
+                GraphicsPath path = new GraphicsPath();
+                path.AddEllipse(0, 0, circularPanel.Width - 1, circularPanel.Height - 1);
+                e.Graphics.SetClip(path);
+                e.Graphics.FillEllipse(new SolidBrush(Color.White), 0, 0, circularPanel.Width - 1, circularPanel.Height - 1);
+            };
+
+            navPanel.Controls.Add(circularPanel);
+
+            // Add logo inside the circular panel
+            PictureBox logo = new PictureBox
+            {
+                Image = Image.FromFile(@"C:\Users\babur\Downloads\Screenshot_2024-12-28_214248-removebg-preview.png"),
+                SizeMode = PictureBoxSizeMode.Zoom,
+                Width = circularPanel.Width - 10,
+                Height = circularPanel.Height - 10,
+                Location = new Point(5, 5)
+            };
+            circularPanel.Controls.Add(logo);
+
+            // Define navigation items with sub-navigation options
+            var navigationItems = new Dictionary<string, string[]>
+    {
+        {"Dashboard", new string[] { }},
+        {"CAR MODELS", new string[] { }},
+        { "Inventory", new[] { "Part Master", "Stock Levels", "Goods Receipt Note (GRN)", "Goods Out" } },
+        { "Production", new[] { "Ongoing Batches", "Completed Batches", "BOM " } },
+        { "Orders", new[] { "Pending Orders", "Processed Orders", "Shipped Orders" } }
+    };
+
+            // Navigation button positioning
+            int totalWidth = 0;
+            List<System.Windows.Forms.Button> mainButtons = new List<System.Windows.Forms.Button>();
+            foreach (var item in navigationItems)
+            {
+                string mainItem = item.Key.ToUpper();
+                System.Windows.Forms.Button mainButton = new System.Windows.Forms.Button
+                {
+                    Text = mainItem,
+                    FlatStyle = FlatStyle.Flat,
+                    BackColor = Color.Transparent,
+                    ForeColor = Color.White,
+                    Width = 120,
+                    Height = 35,
+                    Font = new Font("Segoe UI", 9, FontStyle.Regular),
+                    TextAlign = ContentAlignment.MiddleCenter
+                };
+                mainButton.FlatAppearance.BorderSize = 0;
+                mainButton.FlatAppearance.MouseOverBackColor = Color.LightSteelBlue;
+                mainButtons.Add(mainButton);
+                totalWidth += mainButton.Width + 10;
+            }
+
+            // Position buttons
+            int xOffset = 90;
+            foreach (var item in navigationItems)
+            {
+                string mainItem = item.Key.ToUpper();
+                string[] subItems = item.Value;
+                System.Windows.Forms.Button mainButton = mainButtons.First(b => b.Text == mainItem);
+
+                mainButton.Location = new Point(xOffset, 30);
+                navPanel.Controls.Add(mainButton);
+
+                // --- Add vertical line to separate buttons ---
+                // Create a vertical line (Panel) to separate the buttons
+                Panel verticalLine = new Panel
+                {
+                    BackColor = Color.White, // Line color (you can change it)
+                    Location = new Point(xOffset + mainButton.Width, 30), // Position it right after the button
+                    Width = 2, // Width of the line
+                    Height = mainButton.Height, // Match the height of the main button
+                };
+
+                // Add vertical line to navPanel
+                navPanel.Controls.Add(verticalLine);
+                mainButton.Click += (sender, e) => NavigateToPage(mainItem);
+
+                Panel subNavPanel = new Panel
+                {
+                    Visible = false,
+                    BackColor = Color.SteelBlue,
+                    Location = new Point(xOffset, mainButton.Bottom),
+                    Width = mainButton.Width,
+                    Height = subItems.Length * 49
+                };
+                this.Controls.Add(subNavPanel);
+
+                int yOffset = 35;
+                foreach (string subItem in subItems)
+                {
+                    System.Windows.Forms.Button subButton = new System.Windows.Forms.Button
+                    {
+                        Text = subItem.ToUpper(),
+                        FlatStyle = FlatStyle.Flat,
+                        BackColor = Color.SteelBlue,
+                        ForeColor = Color.White,
+                        Location = new Point(0, yOffset),
+                        Width = mainButton.Width,
+                        Height = 40,
+                        Font = new Font("Segoe UI", 9, FontStyle.Regular),
+                        TextAlign = ContentAlignment.MiddleCenter
+                    };
+                    subButton.FlatAppearance.BorderSize = 1;
+                    subButton.FlatAppearance.MouseOverBackColor = Color.LightSteelBlue;
+                    subButton.Click += (sender, e) => NavigateToPage(subItem);
+                    subNavPanel.Controls.Add(subButton);
+                    yOffset += 40;
+                }
+           
+
+            // Toggle visibility for sub-navigation
+            mainButton.Click += (sender, e) =>
+                {
+                    // Toggle visibility of the sub-navigation panel
+                    subNavPanel.Visible = !subNavPanel.Visible;
+
+                    // Adjust the position of the sub-navigation panel to be below the main button
+                    if (subNavPanel.Visible)
+                    {
+                        subNavPanel.Location = new Point(mainButton.Left, mainButton.Bottom); // Position it below the main button
+                        subNavPanel.BringToFront();
+                    }
+
+                    // Ensure the main button stays visible by setting it explicitly to true
+                    mainButton.Visible = true;
+
+                    // Hide other sub-navigation panels when a new one is clicked, except for dashboardTitlePanel
+                    foreach (Control control in this.Controls)
+                    {
+                        if (control is Panel panel && panel != subNavPanel && panel != navPanel && panel.Name != "dashboardTitlePanel")
+                        {
+                            panel.Visible = false;
+                        }
+                    }// Ensure the dashboardTitlePanel stays visible and at the top
+                    if (dashboardTitlePanel != null)
+                    {
+                        dashboardTitlePanel.Visible = true;
+                        dashboardTitlePanel.BringToFront(); // Bring it to the front
+                    }
+                };
+
+                // Adjust position for next item
+                xOffset += mainButton.Width + 10;
+            }
+        }
+        private void AddEnhancedTitle()
+        {
+            Panel dashboardTitlePanel = new Panel
+            {
+                Name = "dashboardTitlePanel",
+                Dock = DockStyle.Top, // Dock it to the top
+                Height = 65,
+                BackColor = Color.LightSlateGray
+            };
+            this.Controls.Add(dashboardTitlePanel);
+
+            // Add the title label
+            Label titleLabel = new Label
+            {
+                Text = "BILL OF MATERIAL",
+                Font = new Font("Segoe UI", 20, FontStyle.Bold),
+                AutoSize = true,
+                ForeColor = Color.White,
+                TextAlign = ContentAlignment.MiddleCenter
+            };
+            dashboardTitlePanel.Controls.Add(titleLabel);
+
+            // Center the label initially
+            dashboardTitlePanel.SizeChanged += (s, e) =>
+            {
+                titleLabel.Location = new Point(
+                    (dashboardTitlePanel.Width - titleLabel.Width) / 2,
+                    (dashboardTitlePanel.Height - titleLabel.Height) / 2
+                );
+            };
+
+            // Add a bottom border to the title panel
+            Panel bottomBorder = new Panel
+            {
+                Dock = DockStyle.Bottom,
+                Height = 3,
+                BackColor = Color.White // Thin white line to emphasize the separation
+            };
+            dashboardTitlePanel.Controls.Add(bottomBorder);
+
+            // Make sure the panel is visible
+            dashboardTitlePanel.Visible = true; // Ensure the panel is visible when the form is loaded
+        }
+        private void NavigateToPage(string pageName)
+        {
+            if (pageName == "DASHBOARD")
+            {
+                // Create an instance of the Dashboard form
+                dashboard dashboardForm = new dashboard();
+
+                // Maximize the form
+                dashboardForm.WindowState = FormWindowState.Maximized;
+
+                // Show the Dashboard form
+                dashboardForm.Show();
+
+                // Optionally, hide the current form if you don't want it visible
+                this.Hide();
+            }
+            else if (pageName == "CAR MODELS")
+            {
+                // Create an instance of the CarModel form
+                CarModel carModelForm = new CarModel();
+
+                // Maximize the form
+                carModelForm.WindowState = FormWindowState.Maximized;
+
+                // Show the CarModel form
+                carModelForm.Show();
+
+                // Optionally, hide the current form if you don't want it visible
+                this.Hide();
+            }
+            else if (pageName == "PART MASTER")
+            {
+                // Create an instance of the PartMaster form
+                PartMaster partMaster = new PartMaster();
+
+                // Maximize the form
+                partMaster.WindowState = FormWindowState.Maximized;
+
+                // Show the PartMaster form
+                partMaster.Show();
+
+                // Optionally, hide the current form if you don't want it visible
+                this.Hide();
+            }
+            else if (pageName == "STOCK LEVEL")
+            {
+                // Create an instance of the StockLevel form
+                StockLevel stockLevel = new StockLevel();
+
+                // Maximize the form
+                stockLevel.WindowState = FormWindowState.Maximized;
+
+                // Show the StockLevel form
+                stockLevel.Show();
+
+                // Optionally, hide the current form if you don't want it visible
+                this.Hide();
+            }
+            else
+            {
+
+            }
+        }
+        private void InitializeDataGridView()
+        {
+            // Set the size and location for the DataGridView
+            dataGridView1.Size = new Size(720, 458);
+            dataGridView1.Location = new Point(137, 284); // Adjust position as per your form layout
+
+            // Set DataGridView styles
+            dataGridView1.BackgroundColor = Color.White;
+            dataGridView1.BorderStyle = BorderStyle.FixedSingle;
+            dataGridView1.GridColor = Color.SteelBlue; // Set the grid line color
+
+            // Disable unwanted features for a clean look
+            dataGridView1.RowHeadersVisible = false; // Hide the row header
+            dataGridView1.AllowUserToAddRows = false; // Disable adding rows manually
+            dataGridView1.AllowUserToResizeColumns = false; // Prevent resizing columns manually
+
+            // Disable header visual styles to apply custom styles
+            dataGridView1.EnableHeadersVisualStyles = false;
+
+            // Set alternating row colors for better readability
+            dataGridView1.AlternatingRowsDefaultCellStyle.BackColor = Color.LightSteelBlue;
+            dataGridView1.DefaultCellStyle.BackColor = Color.White;
+            dataGridView1.DefaultCellStyle.ForeColor = Color.Black;
+
+            // Highlight selection with Steel Blue theme
+            dataGridView1.DefaultCellStyle.SelectionBackColor = Color.SteelBlue;
+            dataGridView1.DefaultCellStyle.SelectionForeColor = Color.White;
+
+            // Set column header styles
+            dataGridView1.ColumnHeadersDefaultCellStyle.BackColor = Color.SteelBlue; // Background color for headers
+            dataGridView1.ColumnHeadersDefaultCellStyle.ForeColor = Color.White; // Font color for headers
+            dataGridView1.ColumnHeadersDefaultCellStyle.Font = new Font("Segoe UI", 10, FontStyle.Bold); // Font styling
+            dataGridView1.ColumnHeadersDefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter; // Center alignment
+            dataGridView1.ColumnHeadersHeight = 40; // Set column header height
+
+
+
+            // Set grid lines and row border to Steel Blue
+            dataGridView1.CellBorderStyle = DataGridViewCellBorderStyle.Single; // Single border for each cell
+            dataGridView1.DefaultCellStyle.Padding = new Padding(2); // Add padding for better spacing
+            dataGridView1.DefaultCellStyle.ForeColor = Color.Black; // Text color
+
+            // Adjust grid to fit the form
+            dataGridView1.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCells;
+        }
+
+
+        private void label1_Click(object sender, EventArgs e)
+        {
+
+        }
+
+        private void dataGridView1_CellContentClick(object sender, DataGridViewCellEventArgs e)
+        {
+
+        }
+
+        private void panel1_Paint(object sender, PaintEventArgs e)
+        {
+            Panel panel = sender as Panel;
+
+            // Set the background color of the panel
+            panel.BackColor = Color.White;
+
+            // Draw the Steel Blue border
+            using (Pen borderPen = new Pen(Color.SteelBlue, 4)) // Border width of 2
+            {
+                e.Graphics.DrawRectangle(borderPen, 0, 0, panel.Width - 1, panel.Height - 1);
+            }
+        }
+
+        private void panel2_Paint(object sender, PaintEventArgs e)
+        {
+            Panel panel = sender as Panel;
+
+            // Set the background color of the panel
+            panel.BackColor = Color.White;
+
+            // Draw the Steel Blue border
+            using (Pen borderPen = new Pen(Color.SteelBlue, 4)) // Border width of 2
+            {
+                e.Graphics.DrawRectangle(borderPen, 0, 0, panel.Width - 1, panel.Height - 1);
+            }
+        }
+
+        private void InitializeEditButton()
+        {
+            button2.FlatStyle = FlatStyle.Flat; // Use flat style for custom appearance
+            button2.FlatAppearance.BorderSize = 2; // Set border thickness
+            button2.FlatAppearance.BorderColor = Color.SteelBlue; // Set border color to Steel Blue
+            button2.Font = new Font("Segoe UI", 10, FontStyle.Regular); // Set font and styling
+            button2.BackColor = Color.White; // White background for "Edit"
+            button2.ForeColor = Color.Black; // Black text for "Edit"
+
+            // Custom paint for additional styling
+            button2.Paint += (s, e) =>
+            {
+                System.Windows.Forms.Button btn = (System.Windows.Forms.Button)s; // Fully qualified Button class
+                using (Pen borderPen = new Pen(Color.SteelBlue, 2))
+                {
+                    e.Graphics.DrawRectangle(borderPen, 0, 0, btn.Width - 1, btn.Height - 1);
+                }
+            };
+        }
+
+        private void InitializeClearButton()
+        {
+            button3.FlatStyle = FlatStyle.Flat; // Use flat style for custom appearance
+            button3.FlatAppearance.BorderSize = 2; // Set border thickness
+            button3.FlatAppearance.BorderColor = Color.SteelBlue; // Set border color to Steel Blue
+            button3.Font = new Font("Segoe UI", 10, FontStyle.Regular); // Set font and styling
+            button3.BackColor = Color.White; // White background for "Clear"
+            button3.ForeColor = Color.Black; // Black text for "Clear"
+
+            // Custom paint for additional styling
+            button3.Paint += (s, e) =>
+            {
+                System.Windows.Forms.Button btn = (System.Windows.Forms.Button)s; // Fully qualified Button class
+                using (Pen borderPen = new Pen(Color.SteelBlue, 2))
+                {
+                    e.Graphics.DrawRectangle(borderPen, 0, 0, btn.Width - 1, btn.Height - 1);
+                }
+            };
+        }
+
+
+
+
+
+
+
+
+
+
+        // Call this in your form's constructor or Load event
+
+        private void button1_Click_2(object sender, EventArgs e)
+        {
+        }
+
+        private void button2_Click(object sender, EventArgs e)
+        {
+
+        }
+        private void LoadCarModels()
+        {
+
+
+            using (SqlConnection connection = new SqlConnection(connectionString))
+            {
+                string query = "SELECT ModelID, ModelName FROM Car_Model";
+                SqlDataAdapter adapter = new SqlDataAdapter(query, connection);
+                DataTable carModels = new DataTable();
+                adapter.Fill(carModels);
+
+                // Bind data to ComboBox
+                comboBox1.DataSource = carModels;
+                comboBox1.DisplayMember = "ModelName"; // What the user sees
+                comboBox1.ValueMember = "ModelID";    // Hidden value
+                comboBox1.SelectedIndex = -1;         // Default to no selection
+            }
+        }
+        private void InitializeModelInfoPanel()
+        {
+            // Create the panel
+            Panel modelInfoPanel = new Panel
+            {
+                Name = "modelInfoPanel",
+                Size = new Size(720, 40), // Adjust width to match the DataGridView
+                Location = new Point(137, 240), // Position it above the DataGridView
+                BackColor = Color.LightSlateGray // Set background color
+            };
+            // Add a Paint event to draw the white border
+            modelInfoPanel.Paint += (sender, e) =>
+            {
+                Control panel = (Control)sender;
+                using (Pen whitePen = new Pen(Color.LightSlateGray, 3)) // Set border color and thickness
+                {
+                    e.Graphics.DrawRectangle(whitePen, 0, 0, panel.Width - 1, panel.Height - 1);
+                }
+            };
+            // Create the label
+            Label lblModelInfo = new Label
+            {
+                Name = "lblModelInfo",
+                AutoSize = false,
+                Size = new Size(720, 30), // Adjust size as needed
+                Location = new Point(10, 5), // Position inside the panel
+                ForeColor = Color.White,
+                Font = new Font("Segoe UI", 12, FontStyle.Bold), // Increased font size for better visibility
+                TextAlign = ContentAlignment.MiddleCenter, // Center the text
+                Text = "SELECT A MODEL TO VIEW DETAILS" // Default text in uppercase
+            };
+
+            // Add the label to the panel
+            modelInfoPanel.Controls.Add(lblModelInfo);
+
+            // Add the panel to the form
+            this.Controls.Add(modelInfoPanel);
+        }
+
+
+        private void InitializeComboBox1()
+        {
+            // SQL query to fetch ModelID and ModelName
+            string query = "SELECT ModelID, ModelName FROM Car_Model";
+
+            // Create a new DataTable to hold the data
+            DataTable modelTable = new DataTable();
+
+            // Fetch data from the database
+            using (SqlConnection connection = new SqlConnection(connectionString))
+            {
+                using (SqlCommand command = new SqlCommand(query, connection))
+                {
+                    connection.Open();
+                    using (SqlDataReader reader = command.ExecuteReader())
+                    {
+                        modelTable.Load(reader);
+                    }
+                }
+            }
+
+            // Bind the ComboBox to the DataTable
+            comboBox1.DataSource = modelTable;
+            comboBox1.DisplayMember = "ModelName"; // Display ModelName
+            comboBox1.ValueMember = "ModelID"; // Value as ModelID
+            comboBox1.SelectedIndex = -1; // No selection by default
+
+            // Set default text
+            comboBox1.Text = "Select ID & Name";
+
+            // Handle Enter and Leave events
+            comboBox1.Enter += (s, e) =>
+            {
+                if (comboBox1.Text == "Select ID & Name")
+                {
+                    comboBox1.Text = ""; // Clear the text when focused
+                }
+            };
+
+            comboBox1.Leave += (s, e) =>
+            {
+                if (string.IsNullOrWhiteSpace(comboBox1.Text))
+                {
+                    comboBox1.Text = "Select ID & Name"; // Reset the text if nothing is selected
+                }
+            };
+        }
+
+
+
+     
+
+        private string GetPartNameByPartID(string partID)
+        {
+            string partName = string.Empty;
+
+            string query = "SELECT PartName FROM PartMaster WHERE PartID = @PartID";
+
+            using (SqlConnection connection = new SqlConnection(connectionString))
+            {
+                using (SqlCommand command = new SqlCommand(query, connection))
+                {
+                    command.Parameters.AddWithValue("@PartID", partID);
+                    connection.Open();
+                    object result = command.ExecuteScalar();
+                    if (result != null)
+                    {
+                        partName = result.ToString();
+                    }
+                }
+            }
+
+            return partName;
+        }
+
+     
+      
+        private string GetModelNameByBOMID(int bomID)
+        {
+            string modelName = string.Empty;
+
+            string query = @"
+        SELECT CM.ModelName
+        FROM BOM_Header BH
+        JOIN Car_Model CM ON BH.ModelID = CM.ModelID
+        WHERE BH.BOMID = @BOMID";
+
+            using (SqlConnection conn = new SqlConnection(connectionString))
+            {
+                SqlCommand cmd = new SqlCommand(query, conn);
+                cmd.Parameters.AddWithValue("@BOMID", bomID);
+
+                conn.Open();
+                var result = cmd.ExecuteScalar();
+                if (result != null)
+                {
+                    modelName = result.ToString();
+                }
+            }
+
+            return modelName;
+        }
+        private void SelectModelInComboBox(string modelName)
+        {
+            // Check if the ComboBox has data
+            if (comboBox1.DataSource != null)
+            {
+                // Find the corresponding DataRow for the ModelName
+                foreach (DataRowView row in comboBox1.Items)
+                {
+                    // Compare the ModelName
+                    if (row["ModelName"].ToString() == modelName)
+                    {
+                        // Set the ComboBox selection to the matching ModelName
+                        comboBox1.SelectedItem = row;
+                        break;
+                    }
+                }
+            }
+        }
+
+        private void textBox5_TextChanged(object sender, EventArgs e)
+        {
+            int bomID;
+            if (int.TryParse(textBox5.Text, out bomID))
+            {
+                // Load BOM details for the entered BOMID
+                LoadBOMDetails(bomID);  // This will update the DataGridView with the relevant details
+
+                // Get the ModelName based on the BOMID
+                string modelName = GetModelNameByBOMID(bomID);
+                if (!string.IsNullOrEmpty(modelName))
+                {
+                    // Select the ModelName in the ComboBox
+                    SelectModelInComboBox(modelName);
+                }
+            }
+            else
+            {
+                // Optionally, clear the ComboBox and DataGridView when BOMID is invalid
+                comboBox1.SelectedIndex = -1;
+                dataGridView1.DataSource = null;  // Clear the DataGridView
+            }
+        }
+
+
+
+        private void LoadBOMDetails(int bomID)
+        {
+            // Ensure that the columns have already been added before loading data
+            if (dataGridView1.Columns.Count == 0)
+            {
+                InitializeDataGridView();
+            }
+
+            // Clear any existing data (rows) but keep the columns
+            dataGridView1.Rows.Clear();
+
+            // Your SQL query to load data
+            string query = @"
+        SELECT 
+            b.SerialNo,
+            b.BOMID,
+            p.PartID,
+            p.PartName,
+            p.UnitPrice,
+            b.Quantity,
+            (b.Quantity * p.UnitPrice) AS TotalCost
+        FROM 
+            BOM_Detail b
+        JOIN 
+            Parts p ON b.PartID = p.PartID
+        WHERE 
+            b.BOMID = @BOMID";
+
+            using (SqlConnection conn = new SqlConnection(connectionString))
+            {
+                SqlDataAdapter dataAdapter = new SqlDataAdapter(query, conn);
+                dataAdapter.SelectCommand.Parameters.AddWithValue("@BOMID", bomID);
+
+                DataTable dataTable = new DataTable();
+                dataAdapter.Fill(dataTable);
+
+                // Bind the data to the DataGridView
+                dataGridView1.DataSource = dataTable;
+            }
+        }
+
+
+
+
+
+        private void dataGridView1_CellContentClick_1(object sender, DataGridViewCellEventArgs e)
+        {
+
+            // Ensure the clicked cell is in the relevant columns
+            if (e.RowIndex >= 0)  // Ensure the row index is valid
+            {
+                // Get the clicked column index (0: PartID, 1: PartName, 2: Quantity)
+                int colIndex = e.ColumnIndex;
+
+                // Get the values from the clicked row
+                string partID = dataGridView1.Rows[e.RowIndex].Cells["PartID"].Value.ToString();
+                string partName = dataGridView1.Rows[e.RowIndex].Cells["PartName"].Value.ToString();
+                string quantity = dataGridView1.Rows[e.RowIndex].Cells["Quantity"].Value.ToString();
+
+
+                textBox3.Text = partID;   // Update Quantity in TextBox2
+                // Optionally, update TextBox controls with the selected values
+                textBox1.Text = partName;   // Update PartName in TextBox1
+                textBox2.Text = quantity;   // Update Quantity in TextBox2
+            }
+
+        }
+
+        private void comboBox1_SelectedIndexChanged_1(object sender, EventArgs e)
+        {
+
+            if (comboBox1.SelectedIndex > 0) // Ensure something other than the placeholder is selected
+            {
+                string selectedModelName = comboBox1.Text;                  // Model Name from dropdown
+                string selectedModelId = comboBox1.SelectedValue.ToString(); // Model ID from database
+
+                // Find and update the label
+                Label lblModelInfo = this.Controls.Find("lblModelInfo", true).FirstOrDefault() as Label;
+                if (lblModelInfo != null)
+                {
+                    lblModelInfo.Text = $"MODEL:  {selectedModelName.ToUpper()}   |   ID:  {selectedModelId}";
+                }
+            }
+            else
+            {
+                // Optionally clear the label if the placeholder is selected
+                Label lblModelInfo = this.Controls.Find("lblModelInfo", true).FirstOrDefault() as Label;
+                if (lblModelInfo != null)
+                {
+                    lblModelInfo.Text = "SELECT A MODEL TO VIEW DETAILS";
+                }
+            }
+
+            string modelName = comboBox1.SelectedItem?.ToString();
+            if (!string.IsNullOrEmpty(modelName))
+            {
+
+            }
+        }
+
+
+
+        private bool isEditMode = false; // Flag to track edit/save state
+
+        private void button2_Click_1(object sender, EventArgs e)
+        {
+            if (!isEditMode) // First click: Enable editing for Quantity (TextBox2)
+            {
+                // Enable editing for Quantity (TextBox2)
+                textBox2.Enabled = true;
+
+                // Disable editing for PartName (TextBox1) and PartID (TextBox3)
+                textBox1.Enabled = false;
+                textBox3.Enabled = false;
+
+                // Change button text to "Save"
+                button2.Text = "Save";
+
+                // Set the edit mode flag to true
+                isEditMode = true;
+            }
+            else // Second click: Save the changes
+            {
+                // Validate the updated quantity
+                if (ValidateQuantity())
+                {
+                    // Save the updated quantity to the database or other storage
+                    string updatedQuantity = textBox2.Text;
+                    string partID = textBox3.Text;
+
+                    // Call a method to update the database
+                    UpdateQuantityInDatabase(partID, updatedQuantity);
+
+                    // Notify the user
+                    MessageBox.Show("Quantity updated successfully!", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+                    // Refresh the grid to show updated data
+                    RefreshGridData();
+
+                    // Reset the form for the next action
+                    textBox2.Enabled = true;
+                    textBox1.Enabled = true;
+                    textBox3.Enabled = true;
+
+                    // Change button text back to "Edit"
+                    button2.Text = "Edit";
+
+                    // Reset the edit mode flag
+                    isEditMode = false;
+                }
+                else
+                {
+                    MessageBox.Show("Please enter a valid quantity.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+            }
+        }
+        private void RefreshGridData()
+        {
+            string query = "SELECT PartID, PartName, Quantity FROM PartMaster";
+
+            using (SqlConnection connection = new SqlConnection(connectionString))
+            {
+                using (SqlDataAdapter adapter = new SqlDataAdapter(query, connection))
+                {
+                    DataTable dataTable = new DataTable();
+                    adapter.Fill(dataTable);
+
+                    // Bind the updated data to the grid
+                    dataGridView1.DataSource = dataTable;
+                }
+            }
+        }
+
+
+        private bool ValidateQuantity()
+        {
+            if (int.TryParse(textBox2.Text, out int quantity) && quantity >= 0)
+            {
+                return true;
+            }
+            return false;
+        }
+        private void UpdateQuantityInDatabase(string partID, string updatedQuantity)
+        {
+            string query = "UPDATE BOM_Detail SET Quantity = @Quantity WHERE PartID = @PartID";
+
+            using (SqlConnection connection = new SqlConnection(connectionString))
+            {
+                using (SqlCommand command = new SqlCommand(query, connection))
+                {
+                    command.Parameters.AddWithValue("@Quantity", updatedQuantity);
+                    command.Parameters.AddWithValue("@PartID", partID);
+
+                    connection.Open();
+                    command.ExecuteNonQuery();
+                }
+            }
+        }
+
+        private void button1_Click_1(object sender, EventArgs e)
+        {
+
+        }
+
+        private void button3_Click_1(object sender, EventArgs e)
+        {
+
+            // Clear the ComboBox1 selection and reset to default
+            comboBox1.SelectedIndex = -1;
+            comboBox1.Text = "Select ModelID & Name";
+
+            
+
+            // Clear the text in TextBox1 and TextBox2
+            textBox1.Text = string.Empty;
+            textBox2.Text = string.Empty;
+            textBox5.Text = string.Empty;
+              textBox3.Text = string.Empty;
+            // Reset the label to the default text
+            Label lblModelInfo = this.Controls.Find("lblModelInfo", true).FirstOrDefault() as Label;
+            if (lblModelInfo != null)
+            {
+                lblModelInfo.Text = "SELECT A MODEL TO VIEW DETAILS";
+            }
+
+
+            // Clear the DataGridView by resetting the DataSource
+            dataGridView1.DataSource = null;
+
+            // Optional: You can also reset other properties like DataGridView's columns if needed
+            dataGridView1.Columns.Clear();
+        }
+
+        private void comboBox2_SelectedIndexChanged_1(object sender, EventArgs e)
+        {
+        }
+        private string GetPartIDFromPartName(string partName)
+        {
+            string partID = string.Empty;
+
+            string query = "SELECT PartID FROM PartMaster WHERE PartName = @PartName";
+
+            using (SqlConnection connection = new SqlConnection(connectionString))
+            {
+                using (SqlCommand command = new SqlCommand(query, connection))
+                {
+                    command.Parameters.AddWithValue("@PartName", partName);
+                    connection.Open();
+
+                    // Execute the query to get the PartID for the given PartName
+                    object result = command.ExecuteScalar();
+
+                    if (result != null)
+                    {
+                        partID = result.ToString();
+                    }
+                }
+            }
+
+            return partID;
+        }
+        private void textBox1_TextChanged(object sender, EventArgs e)
+        {
+            string partName = textBox1.Text;
+
+            if (!string.IsNullOrEmpty(partName))
+            {
+                // Get the corresponding PartID based on PartName
+                string partID = GetPartIDFromPartName(partName);
+
+                if (!string.IsNullOrEmpty(partID))
+                {
+                    // Set the selected PartID in comboBox2
+                    textBox3.Text = partID; // This will automatically select the PartID if it exists in comboBox2
+                }
+            }
+        }
+
+        private void textBox3_TextChanged(object sender, EventArgs e)
+        {
+
+        }
+    }
+}
+
+    
+
+
+
+
+
